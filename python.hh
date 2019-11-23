@@ -435,46 +435,6 @@ public:
     explicit PYWRAPPER(const long int, PyLong_FromLong(t))
     explicit PYWRAPPER(const long long int, PyLong_FromLongLong(t))
 
-/*    /// Convert a C++ type to a Python type
-    template <typename T, typename V = typename std::remove_const<T>::type>
-    static Python build(const T t)
-    {
-        initialize();
-
-        PyObject* ret = nullptr;
-        // string
-        if constexpr(std::is_same<V, std::string>::value)
-            ret = PyUnicode_FromString(t.c_str());
-        // string
-        else if constexpr(std::is_same<V, char*>::value)
-            ret = PyUnicode_FromString(t);
-        // string (should probably set a const* remover)
-        else if constexpr(std::is_same<V, const char*>::value)
-            ret = PyUnicode_FromString(t);
-        // float
-        else if constexpr(std::is_floating_point<V>::value)
-            ret = PyFloat_FromDouble(t);
-        // unsigned int
-        else if constexpr(std::is_unsigned<V>::value)
-            ret = PyLong_FromSize_t(t);
-        // signed int
-        else if constexpr(std::is_integral<V>::value)
-            ret = PyLong_FromLongLong(t);
-        // Python
-        else if constexpr(std::is_same<V, Python>::value)
-            return t;
-        // nullptr
-        else if constexpr(std::is_null_pointer<V>::value)
-            ret = t;
-        else
-            assert(false && "No compatible type for Python constructor");
-        err("build");
-
-        release();
-
-        return Python(ret, "built", true);
-    }*/
-
     /// Default constructor
     Python(void)
     {}
