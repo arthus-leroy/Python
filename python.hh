@@ -1,3 +1,11 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ *
+ * Copyright (c) 2019, Arthus Leroy <arthus.leroy@epita.fr>
+ * On https://github.com/arthus-leroy/Python
+ * All rights reserved. */
+
 # pragma once
 
 // WARNING: requires use of pkg-config (pkg-config --cflags --libs python3)
