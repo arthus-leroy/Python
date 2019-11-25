@@ -15,26 +15,10 @@
 # include <memory>
 # include <cassert>
 
-# ifndef NDEBUG
+# include "backtrace.hh"
+
 //# define PYDEBUG
-# endif
 
-/** TODO
- *
- *  Copy all the methods of Python in Proxy in the Pythonway than operator[] and remove get()
- *  Move GetAttr and SetAttr to their respective functions ?
- *  Add more types to constructor, like vector, map
- *  Add more types to convert from Python
- *  Quote name in operator[] for access with string ?
- *  add operator() instead of call(args, kwargs)
- *
- *  Replace the exits by exceptions
- */
-
-/** FIXME
- *
- *  No pending issue
- */
 struct PyRef
 {
     using ref_counter_t = std::shared_ptr<std::size_t>;
@@ -164,7 +148,8 @@ private:
         {
             std::cerr << "\nIn function \"" << func << "\":" << std::endl;
             PyErr_Print();
-            exit(EXIT_FAILURE);
+            // skip "err" trace
+            backtrace(1);
         }
     }
 
@@ -196,8 +181,7 @@ private:
                        || std::is_convertible<key_t, int>::value);
         }
 
-        /// Implicit convertion to Python
-        operator Python()
+        operator PyObject*()
         {
             PyObject* ret = nullptr;
 
@@ -215,6 +199,14 @@ private:
                 case Type::Function: PyErr_SetString(PyExc_TypeError, "'function' object is not subscriptable"); break;
             }
             err("assign");
+
+            return ret;
+        }
+
+        /// Implicit convertion to Python
+        operator Python()
+        {
+            PyObject* ret = *this;
 
             return Python(ret, object_.name + "[" + to_string(key_) + "]", false);
         }
@@ -277,11 +269,31 @@ public:
     static Python import(const std::string& name)
     {
         initialize();
-        auto ret = Python(PyImport_ImportModule(name.c_str()), name, true);
+        auto module = Python(PyImport_ImportModule(name.c_str()), name, true);
         err("import");
+
+        auto dict = PyModule_GetDict(module);
+        err("import");  // a bit careful doesn't hurt, isn't it ?
+
         release();
 
-        return Python(PyModule_GetDict(ret), "module " + name, false);
+        return Python(dict, "module " + name, false);
+    }
+
+    /// Return the python builtins
+    static Python builtins(void)
+    {
+        auto ptr = PyEval_GetBuiltins();
+        err("builtins");
+
+        return Python(ptr, "builtins", false);
+    }
+
+    /// Call a builtin function
+    static Python call_builtin(const std::string& name, Python args = nullptr, Python kwargs = nullptr)
+    {
+        auto main = builtins();
+        return main.call(name, args, kwargs);
     }
 
     /// Evaluate python code
@@ -301,13 +313,13 @@ private:
     template <typename T, typename ...Args>
     static void tuple_collect(PyObject* tuple, Py_ssize_t i, T& item, Args... items)
     {
-        // disable DECREF since SetItem steal the reference of obj
+        // disable DECREF since SetItem steals the reference of obj
         auto obj = Python(item, false);
         PyTuple_SetItem(tuple, i, obj);
         err("tuple_collect");
 
         if constexpr(sizeof...(Args))
-            list_collect(tuple, i + 1, items...);
+            tuple_collect(tuple, i + 1, items...);
     }
 
 public:
@@ -411,12 +423,12 @@ public:
 
     /// convertion constructors
     # define PYWRAPPER(TYPE, EXPR)                  \
-        Python(TYPE t, const bool is_ref = true) \
+        Python(TYPE t, const bool is_ref = true)    \
         {                                           \
             initialize();                           \
                                                     \
             PyObject* ret = EXPR;                   \
-            err("Python");                       \
+            err("Python");                          \
                                                     \
             release();                              \
                                                     \
@@ -434,6 +446,8 @@ public:
     explicit PYWRAPPER(const int, PyLong_FromLong(t))
     explicit PYWRAPPER(const long int, PyLong_FromLong(t))
     explicit PYWRAPPER(const long long int, PyLong_FromLongLong(t))
+    template <typename T>
+    explicit PYWRAPPER(PyIndexProxy<T>&, t)
 
     /// Default constructor
     Python(void)
@@ -450,6 +464,10 @@ public:
 
     Python(PyObject* ptr, const std::string& name, const bool is_ref)
         : ref_(ptr, name, is_ref)
+    {}
+
+    Python(const PyRef& ref)
+        : ref_(ref)
     {}
 
     /// Copy operator
