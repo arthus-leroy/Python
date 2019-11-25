@@ -55,7 +55,6 @@
         else
         {
             char c;
-            unsigned state = 0;
 
             waitpid(child_pid, NULL, 0);        // wait for out
 
@@ -63,30 +62,36 @@
 
             // skip "waitpid" and "backtrace" in output
             skip += 2;
+            unsigned skip_space = 0;
+            bool line = false;
 
             int err;
             while ((err = read(p[0], &c, 1)) > 0)     // and read in
             {
                 // begin delimiter
-                if (c == '#' && state == 0)
+                if (c == '#' && line == false)
                 {
-                    fprintf(stderr, "    ");
-                    state = 1;
+                    if (skip == 0)
+                        fprintf(stderr, "    ");
+
+                    skip_space = 0;
+                    line = true;
                 }
 
-                // between ' ' (after '#') and '\n'
-                if (state == 2 && skip == 0)
+                // between '#' and '\n' after skipping X spaces and Y lines
+                if (line && skip == 0 && skip_space > 2)
                     fputc(c, stderr);
 
-                if (c == ' ' && state == 1)
-                    state = 2;
+                // number of spaces skipped
+                if (line && c == ' ')
+                    skip_space++;
 
                 // end delimiter
-                if (c == '\n' && state == 2)
+                if (line && c == '\n')
                 {
-                    if (skip != 0)
+                    if (skip)
                         skip--;
-                    state = 0;
+                    line = false;
                 }
             }
             if (err == -1)
