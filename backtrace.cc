@@ -21,7 +21,7 @@
 
     # define ERR() throw Error(strerror(errno))
 
-    void backtrace(unsigned skip = 0)
+    void backtrace(unsigned skip)
     {
         char pid_buf[30];
         const int pid = getpid();
