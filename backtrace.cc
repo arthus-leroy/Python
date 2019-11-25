@@ -95,12 +95,12 @@
             close(p[1]);
         }
 
-        Error("");
+        throw Error("");
     }
 # else
     void backtrace(unsigned)
     {
-        Error("");
+        throw Error("");
     }
 
 # endif
