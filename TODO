@@ -5,3 +5,4 @@
  Quote name in operator[] for access with string ?
  Add operator() instead of call(args, kwargs)
  For dict: change from free arguments to pairs for clarity ?
+ Think about the case PyIndexProxy.operator=(PyIndexProxy)
