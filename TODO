@@ -1,0 +1,7 @@
+ Copy all the methods of Python in Proxy in the Pythonway than operator[] and remove get()
+ Move GetAttr and SetAttr to their respective functions ?
+ Add more types to constructor, like vector, map
+ Add more types to convert from Python
+ Quote name in operator[] for access with string ?
+ Add operator() instead of call(args, kwargs)
+ For dict: change from free arguments to pairs for clarity ?
