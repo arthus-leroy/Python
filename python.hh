@@ -301,6 +301,11 @@ private:
     template <typename key_t>
     static std::string to_string(PyIndexProxy<key_t>& s) { return s.name() + "[" + to_string(s.key()) + "]"; }
 
+    // Use this with caution, it should be used in place of another constructor
+    Python(PyObject* o)
+        : ref_(o, "PyObject*", false)
+    {}
+
 public:
     /// Access operators
     # define ACCESS(TYPE) auto operator[](TYPE key) { return PyIndexProxy(ref_, get_type(), key); }
@@ -361,10 +366,10 @@ private:
         PyTuple_SetItem(tuple, i, obj);
         err("tuple_collect");
 
-        std::string& name = obj.ref_.name;
+        std::string name = obj.ref_.name;
 
         if constexpr(sizeof...(Args))
-            name += "," + tuple_collect(tuple, i + 1, items...);
+            name += ", " + tuple_collect(tuple, i + 1, items...);
 
         return name;
     }
@@ -382,21 +387,25 @@ public:
         if constexpr(sizeof...(Args))
             name = tuple_collect(ptr, 0, items...);
 
-        return Python(ptr, "tuple(" + name + ")", true);
+        return Python(ptr, "(" + name + ")", true);
     }
 
 private:
     /// Collect the args (values) and put them into the list
     template <typename T, typename ...Args>
-    static void list_collect(PyObject* list, Py_ssize_t i, T& item, Args... items)
+    static std::string list_collect(PyObject* list, Py_ssize_t i, T& item, Args... items)
     {
         // disable DECREF since SetItem steal the reference of obj
         auto obj = Python(item, false);
         PyList_SET_ITEM(list, i, obj);
         err("list_collect");
 
+        std::string name = obj.ref_.name;
+
         if constexpr(sizeof...(Args))
-            list_collect(tuple, i + 1, items...);
+            name += ", " + list_collect(list, i + 1, items...);
+
+        return name;
     }
 
 public:
@@ -407,24 +416,31 @@ public:
         auto ptr = PyList_New(sizeof...(Args));
         err("list");
 
-        auto list = Python(ptr, "list", true);
+        std::string name;
 
         if constexpr(sizeof...(Args))
-            list_collect(list, 0, items...);
+            name = list_collect(list, 0, items...);
 
-        return list;
+        return Python(ptr, "[" + name + "]", true);
     }
 
 private:
     /// Collect the args (key, value pairs) and put them into the dict
     template <typename K, typename T, typename ...Args>
-    static void dict_collect(Python dict, K& key, T& item, Args... items)
+    static std::string dict_collect(Python dict, K& key, T& item, Args... items)
     {
-        dict[key] = item;
+        auto k = Python(key);
+        auto i = Python(item);
+
+        dict[k] = i;
         err("dict_collect");
 
+        std::string name = k.ref_.name + ": " + i.ref_.name;
+
         if constexpr(sizeof...(Args))
-            dict_collect(dict, items...);
+            name += ", " + dict_collect(dict, items...);
+
+        return name;
     }
 
 public:
@@ -435,12 +451,12 @@ public:
         auto ptr = PyDict_New();
         err("dict");
 
-        auto dict = Python(ptr, "dict", true);
+        std::string name;
 
         if constexpr(sizeof...(Args))
-            dict_collect(dict, items...);
+            name = dict_collect(Python(ptr), items...);
 
-        return dict;
+        return Python(ptr, "{" + name + "}", true);
     }
 
     /// Create Python value from format
