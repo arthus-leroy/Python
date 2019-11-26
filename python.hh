@@ -14,10 +14,18 @@
 # include <iostream>
 # include <memory>
 # include <cassert>
+# include <filesystem>
 
 # include "backtrace.hh"
 
-//# define PYDEBUG
+// INCREF/DECREF is any Instance of the object 
+/// Enable logging of INCREF and DECREF
+//# define PYDEBUG_REF
+
+// Construction and Destruction are the creation and release of the Python object
+// To be noted, the object can be destroyed, but still held by another object
+/// Enable logging of construction and destruction
+//# define PYDEBUG_OBJ
 
 struct PyRef
 {
@@ -30,10 +38,17 @@ struct PyRef
         if (ptr)
         {
             if (counter)
-                (*counter)++;
+            {
+                # ifdef PYDEBUG_OBJ
+                if (*counter == 0)
+                    std::cout << "Construction of " << name << std::endl;
+                # endif
 
-            # ifdef PYDEBUG
-            std::cerr << "Incref of " << name << std::endl;
+                (*counter)++;
+            }
+
+            # ifdef PYDEBUG_REF
+            std::cout << "Incref of " << name << std::endl;
             # endif
         }
     }
@@ -61,8 +76,8 @@ struct PyRef
         {
             (*counter)++;
 
-            # ifdef PYDEBUG
-            std::cerr << "Incref of " << name << std::endl;
+            # ifdef PYDEBUG_REF
+            std::cout << "Incref of " << name << std::endl;
             # endif
         }
 
@@ -86,21 +101,20 @@ struct PyRef
         if (counter)
             (*counter)--;
 
-        # ifdef PYDEBUG
+        # ifdef PYDEBUG_REF
         if (counter)
         {
-            std::cerr << "Decref of " << name;
-            std::cerr << " (" << *counter << " instances remaining)";
-            std::cerr << std::endl;
+            std::cout << "Decref of " << name;
+            std::cout << " (" << *counter << " instances remaining)" << std::endl;
         }
         # endif
 
         if (is_ref && *counter == 0)
         {
-            Py_DECREF(ptr);
+            Py_XDECREF(ptr);
 
-            # ifdef PYDEBUG
-            std::cerr << "Destruction of " << name << std::endl;
+            # ifdef PYDEBUG_OBJ
+            std::cout << "Destruction of " << name << std::endl;
             # endif
         }
     }
@@ -122,7 +136,6 @@ public:
         Object,
         Dict,
         Sequence,   // list, array
-        Function,
     };
 
 private:
@@ -148,6 +161,8 @@ private:
         {
             std::cerr << "\nIn function \"" << func << "\":" << std::endl;
             PyErr_Print();
+            std::cerr << std::endl;
+
             // skip "err" trace
             backtrace(1);
         }
@@ -158,6 +173,7 @@ private:
     static std::string to_string(const PyRef& s) { return s.name; }
     static std::string to_string(Python& s) { return s.name(); }
     static std::string to_string(nullptr_t) { return "NULL"; }
+    static std::string to_string(const std::filesystem::path& s) { return s.string(); }
     template <typename T>
     static std::string to_string(const T t) { return std::to_string(t); }
 
@@ -187,8 +203,8 @@ private:
 
             switch (type_)
             {
-                case Type::Object:  ret = PyObject_GetAttr(object_, Python(key_)); break;
                 // check for presence (as it's not checked ?)
+                case Type::Object:  ret = PyObject_GetAttr(object_, Python(key_)); break;
                 case Type::Dict:    ret = PyDict_GetItemWithError(object_, Python(key_)); break;
                 case Type::Sequence:
                     if constexpr(std::is_convertible<key_t, Py_ssize_t>::value)
@@ -196,7 +212,6 @@ private:
                     else
                         PyErr_SetString(PyExc_TypeError, "list indices must be integers or slices");
                     break;
-                case Type::Function: PyErr_SetString(PyExc_TypeError, "'function' object is not subscriptable"); break;
             }
             err("assign");
 
@@ -211,38 +226,63 @@ private:
             return Python(ret, object_.name + "[" + to_string(key_) + "]", false);
         }
 
-        bool operator=(PyObject* object)
+        auto& operator=(PyObject* object)
         {
-            bool ret = false;
             auto key = Python(key_);
 
             switch (type_)
             {
-                case Type::Object:  ret = PyObject_SetAttr(object_.ptr, Python(key_), object); break;
-                case Type::Dict:    ret = PyDict_SetItem(object_.ptr, Python(key_), object); break;
+                case Type::Object:  PyObject_SetAttr(object_.ptr, Python(key_), object); break;
+                case Type::Dict:    PyDict_SetItem(object_.ptr, Python(key_), object); break;
                 case Type::Sequence:
                     if constexpr(std::is_convertible<key_t, Py_ssize_t>::value)
-                        ret = PySequence_GetItem(object_.ptr, key_);
+                        PySequence_SetItem(object_.ptr, key_, object);
                     else
                         PyErr_SetString(PyExc_TypeError, "list indices must be integers or slices");
                     break;
-                case Type::Function: PyErr_SetString(PyExc_TypeError, "'function' object is not subscriptable"); break;
             }
             err("assign");
 
-            return ret;
+            return *this;
         }
 
-        bool operator=(Python object)
+        auto& operator=(Python object)
         {
             // explicit convertion to avoid looping on itself
             return operator=(static_cast<PyObject*>(object));
         }
 
+        // FIXME: ambiguous situations, risk of error
+        // auto proxy = PyIndexProxy()  -> assignation
+        // proxy = PyIndexProxy()       -> item setter
+        auto& operator=(PyIndexProxy& proxy)
+        {
+            // setter
+            if (object_)
+                operator=(static_cast<PyObject*>(proxy));
+            // assignation
+            else
+            {
+                object_ = proxy.object_;
+                type_ = proxy.type_;
+                key_ = proxy.key_;
+            }
+        }
+
         template <typename T>
-        bool operator=(T t)
+        auto& operator=(T t)
         {
             return operator=(Python(t));
+        }
+
+        auto name()
+        {
+            return object_.name;
+        }
+
+        auto key()
+        {
+            return key_;
         }
 
     // Since we can't overload "operator.()", we need to duck-type our proxy class
@@ -254,9 +294,12 @@ private:
 
     private:
         PyRef object_;
-        const Type type_;
-        const key_t key_;
+        Type type_;
+        key_t key_;
     };
+
+    template <typename key_t>
+    static std::string to_string(PyIndexProxy<key_t>& s) { return s.name() + "[" + to_string(s.key()) + "]"; }
 
 public:
     /// Access operators
@@ -311,15 +354,19 @@ public:
 private:
     /// Collect the args (values) and put them into the tuple
     template <typename T, typename ...Args>
-    static void tuple_collect(PyObject* tuple, Py_ssize_t i, T& item, Args... items)
+    static std::string tuple_collect(PyObject* tuple, Py_ssize_t i, T& item, Args... items)
     {
         // disable DECREF since SetItem steals the reference of obj
         auto obj = Python(item, false);
         PyTuple_SetItem(tuple, i, obj);
         err("tuple_collect");
 
+        std::string& name = obj.ref_.name;
+
         if constexpr(sizeof...(Args))
-            tuple_collect(tuple, i + 1, items...);
+            name += "," + tuple_collect(tuple, i + 1, items...);
+
+        return name;
     }
 
 public:
@@ -328,14 +375,14 @@ public:
     static Python tuple(Args... items)
     {
         auto ptr = PyTuple_New(sizeof...(Args));
-        err("args");
+        err("tuple");
 
-        auto tuple = Python(ptr, "tuple", true);
+        std::string name;
 
         if constexpr(sizeof...(Args))
-            tuple_collect(tuple, 0, items...);
+            name = tuple_collect(ptr, 0, items...);
 
-        return tuple;
+        return Python(ptr, "tuple(" + name + ")", true);
     }
 
 private:
@@ -345,7 +392,7 @@ private:
     {
         // disable DECREF since SetItem steal the reference of obj
         auto obj = Python(item, false);
-        PyList_SetItem(list, i, obj);
+        PyList_SET_ITEM(list, i, obj);
         err("list_collect");
 
         if constexpr(sizeof...(Args))
@@ -371,12 +418,9 @@ public:
 private:
     /// Collect the args (key, value pairs) and put them into the dict
     template <typename K, typename T, typename ...Args>
-    static void dict_collect(PyObject* dict, K& key, T& item, Args... items)
+    static void dict_collect(Python dict, K& key, T& item, Args... items)
     {
-        // disable DECREF since SetItem steal the reference of obj
-        auto obj = Python(item, false);
-        auto k = Python(key);
-        PyDict_SetItem(dict, k, obj);
+        dict[key] = item;
         err("dict_collect");
 
         if constexpr(sizeof...(Args))
@@ -422,32 +466,42 @@ public:
     }
 
     /// convertion constructors
-    # define PYWRAPPER(TYPE, EXPR)                  \
-        Python(TYPE t, const bool is_ref = true)    \
-        {                                           \
-            initialize();                           \
-                                                    \
-            PyObject* ret = EXPR;                   \
-            err("Python");                          \
-                                                    \
-            release();                              \
-                                                    \
-            ref_ = PyRef(ret, "built", is_ref);     \
+    # define PYTHON(TYPE, EXPR, NAME)                                   \
+        Python(TYPE t, const bool is_ref = true)                        \
+        {                                                               \
+            initialize();                                               \
+                                                                        \
+            PyObject* ret = EXPR;                                       \
+            err("Python");                                              \
+                                                                        \
+            release();                                                  \
+                                                                        \
+            ref_ = PyRef(ret, #NAME"(" + to_string(t) + ")", is_ref);    \
         }
 
     // string
-             PYWRAPPER(const std::string&, PyUnicode_FromString(t.c_str()))
+             PYTHON(const std::string&, PyUnicode_FromString(t.c_str()), string)
+    explicit PYTHON(const char*, PyUnicode_FromString(t), string)
+    explicit PYTHON(const std::filesystem::path&, PyUnicode_FromString(t.c_str()), path)
     // floatant
-    explicit PYWRAPPER(const float, PyFloat_FromDouble(t))
-    explicit PYWRAPPER(const double, PyFloat_FromDouble(t))
+    explicit PYTHON(const float, PyFloat_FromDouble(t), float)
+    explicit PYTHON(const double, PyFloat_FromDouble(t), double)
     // unsigned
-    explicit PYWRAPPER(const std::size_t, PyLong_FromSize_t(t))
+    explicit PYTHON(const std::size_t, PyLong_FromSize_t(t), size_t)
     // signed
-    explicit PYWRAPPER(const int, PyLong_FromLong(t))
-    explicit PYWRAPPER(const long int, PyLong_FromLong(t))
-    explicit PYWRAPPER(const long long int, PyLong_FromLongLong(t))
+    explicit PYTHON(const int, PyLong_FromLong(t), int)
+    explicit PYTHON(const long int, PyLong_FromLong(t), long)
+    explicit PYTHON(const long long int, PyLong_FromLongLong(t), longlong)
     template <typename T>
-    explicit PYWRAPPER(PyIndexProxy<T>&, t)
+    explicit PYTHON(PyIndexProxy<T>&, t, Index)
+
+    explicit Python(const bool t, const bool is_ref = true)
+    {
+        if (t)
+            ref_ = PyRef(True, "True", is_ref);
+        else
+            ref_ = PyRef(False, "False", is_ref);
+    }
 
     /// Default constructor
     Python(void)
@@ -512,8 +566,6 @@ public:
             return Type::Dict;
         else if (PySequence_Check(ref_))
             return Type::Sequence;
-        else if (PyFunction_Check(ref_))
-            return Type::Function;
         else
             return Type::Object;
     }
@@ -538,10 +590,10 @@ public:
     /*===== function =====*/
     Python call(Python args = nullptr, Python kwargs = nullptr)
     {
-        // args must be at least an empty tupple
+        // args must be at least an empty tuple
         // FYI, not being an iterable object raise a MemoryError
         if (args.is_valid() == false)
-            args = list();
+            args = tuple();
 
         auto ret = PyObject_Call(ref_, args, kwargs);
         err("call");
@@ -628,7 +680,7 @@ private:
     PyRef ref_;
 
 public:
-    const static inline PyRef True = PyRef(Py_True, "True", false);
-    const static inline PyRef False = PyRef(Py_False, "False", false);
-    const static inline PyRef None = PyRef(Py_None, "None", false);
+    static inline PyRef True = PyRef(Py_True, "True", false);
+    static inline PyRef False = PyRef(Py_False, "False", false);
+    static inline PyRef None = PyRef(Py_None, "None", false);
 };
