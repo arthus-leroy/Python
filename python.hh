@@ -322,6 +322,8 @@ public:
     /// Return the python builtins
     static Python builtins(void)
     {
+        initialize();
+
         auto ptr = PyEval_GetBuiltins();
         err("builtins");
 
@@ -460,6 +462,8 @@ public:
     template <typename ...Args>
     static Python build_format(const std::string& format, Args... args)
     {
+        initialize();
+
         auto ret = Py_BuildValue(format.c_str(), args...);
         err("build_format");
 
@@ -471,6 +475,7 @@ public:
     static Python format(const std::string& format, Args... args)
     {
         initialize();
+
         const auto ret = PyUnicode_FromFormat(format.c_str(), args...);
         err("Python");
 
