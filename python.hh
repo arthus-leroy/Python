@@ -524,15 +524,11 @@ public:
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ull", is_ref);
         // bool was too tedious to let alone because of multiple convertions to it
         else if constexpr(std::is_same<T, bool>::value)
-        {
-            if (t)
-                ref_ = PyRef(True, "True", false);
-            else
-                ref_ = PyRef(False, "False", false);
-        }
+            ref_ = t ? True : False;
+        // in case you didn't activate unused variables
         else std::logic_error("Tried to convert unimplemented type to Python type");
 
-        // mute unused is_ref if not used
+        // mute unused is_ref if not used (like in bool's case)
         (void) is_ref;
 
         err("Python");
