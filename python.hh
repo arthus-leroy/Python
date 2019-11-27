@@ -161,6 +161,7 @@ private:
         }
     }
 
+    static std::string to_string(const char s) { return "\"" + std::string(1, s) + "\""; }
     static std::string to_string(const char* s) { return "\"" + std::string(s) + "\""; }
     static std::string to_string(const std::string& s) { return "\"" + s + "\""; }
     static std::string to_string(const PyRef& s) { return s.name; }
@@ -498,33 +499,38 @@ public:
     }
 
     // unified interface to get rid of ambiguous overloads
-    template <typename T>
+    template <typename T, typename B = typename std::remove_cv<T>::type>
     explicit Python(const T t, const bool is_ref = true)
     {
         initialize();
-             if constexpr(std::is_same<T, char*>::value || std::is_same<T, const char*>::value)
+             if constexpr(std::is_same<B, char*>::value || std::is_same<T, const char*>::value)
             ref_ = PyRef(PyUnicode_FromString(t), to_string(t), is_ref);
-        else if constexpr(std::is_same<T, float>::value)
+        else if constexpr(std::is_same<B, char>::value)
+            ref_ = PyRef(PyUnicode_FromStringAndSize(&t, 1), to_string(t), is_ref);
+        // TODO: add wchar_t
+        else if constexpr(std::is_same<B, float>::value)
             ref_ = PyRef(PyFloat_FromDouble(t), to_string(t) + "f", is_ref);
-        else if constexpr(std::is_same<T, double>::value)
+        else if constexpr(std::is_same<B, double>::value)
             ref_ = PyRef(PyFloat_FromDouble(t), to_string(t), is_ref);
-        else if constexpr(std::is_same<T, long double>::value)
+        else if constexpr(std::is_same<B, long double>::value)
             ref_ = PyRef(PyFloat_FromDouble(t), to_string(t) + "l", is_ref);
-        else if constexpr(std::is_same<T, int>::value)
+        // TODO: add short
+        else if constexpr(std::is_same<B, int>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t), is_ref);
-        else if constexpr(std::is_same<T, long>::value)
+        else if constexpr(std::is_same<B, long>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "l", is_ref);
-        else if constexpr(std::is_same<T, long long>::value)
+        else if constexpr(std::is_same<B, long long>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ll", is_ref);
-        else if constexpr(std::is_same<T, unsigned int>::value)
+        else if constexpr(std::is_same<B, unsigned int>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "u", is_ref);
-        else if constexpr(std::is_same<T, unsigned long>::value)
+        else if constexpr(std::is_same<B, unsigned long>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ul", is_ref);
-        else if constexpr(std::is_same<T, unsigned long long>::value)
+        else if constexpr(std::is_same<B, unsigned long long>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ull", is_ref);
         // bool was too tedious to let alone because of multiple convertions to it
-        else if constexpr(std::is_same<T, bool>::value)
+        else if constexpr(std::is_same<B, bool>::value)
             ref_ = t ? True : False;
+        // TODO: add array, vector, deque, forward_list, list, set, map support
         // in case you didn't activate unused variables
         else std::logic_error("Tried to convert unimplemented type to Python type");
 
