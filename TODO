@@ -1,9 +1,15 @@
- Copy all the methods of Python in Proxy in the Pythonway than operator[] and remove get()
- Move GetAttr and SetAttr to their respective functions ?
- Add more types to constructor, like vector, map
- Add more types to convert from Python
- Add operator() instead of call(args, kwargs)
- For dict: change from free arguments to pairs for clarity ?
- Think about the case PyIndexProxy.operator=(PyIndexProxy)
-Replace string(...) by "...", float(...) by ...f, etc (make separate constructors ?)
-Escape string in to_string (for visual reasons)
+Python:
+    Copy all the methods of Python in Proxy in the Pythonway than operator[] and remove get()
+    Move GetAttr and SetAttr to their respective functions ?
+    Add more types to constructor, like vector, map
+    Add more types to convert from Python
+    Add operator() instead of call(args, kwargs)
+    For dict: change from free arguments to pairs for clarity ?
+    Think about the case PyIndexProxy.operator=(PyIndexProxy)
+    Escape string in to_string (for visual reasons)
+    Round the float error and remove trailing zeros when creating name
+    Search for an alternative to Python{PyIndexProxy} (yeah, it sucks)
+    Investigate on Python{PyIndexProxy} not creating an instance (test constructors.cc)
+
+Tests:
+    add PASSED's output in html report
