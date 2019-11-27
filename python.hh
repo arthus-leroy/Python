@@ -161,8 +161,8 @@ private:
         }
     }
 
-    static std::string to_string(const char* s) { return s; }
-    static std::string to_string(const std::string& s) { return s; }
+    static std::string to_string(const char* s) { return "\"" + std::string(s) + "\""; }
+    static std::string to_string(const std::string& s) { return "\"" + s + "\""; }
     static std::string to_string(const PyRef& s) { return s.name; }
     static std::string to_string(Python& s) { return s.name(); }
     static std::string to_string(nullptr_t) { return "NULL"; }
@@ -492,7 +492,7 @@ public:
     {
         initialize();
              if constexpr(std::is_same<T, char*>::value || std::is_same<T, const char*>::value)
-            ref_ = PyRef(PyUnicode_FromString(t), "\"" + to_string(t) + "\"", is_ref);
+            ref_ = PyRef(PyUnicode_FromString(t), to_string(t), is_ref);
         else if constexpr(std::is_same<T, float>::value)
             ref_ = PyRef(PyFloat_FromDouble(t), to_string(t) + "f", is_ref);
         else if constexpr(std::is_same<T, double>::value)

@@ -14,7 +14,7 @@ int main()
     Python(42);
     Python(42l);
     Python(42ll);
-    // Python(sys["stderr"]) fails to compile miserably
+    // FIXME: Python(sys["stderr"]) fails to compile miserably
     Python{sys["stderr"]};
     Python(true);
 }
