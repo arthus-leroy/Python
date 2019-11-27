@@ -146,13 +146,6 @@ private:
             Py_Initialize();
             initialized_ = true;
         }
-
-        instances_++;
-    }
-
-    static void release()
-    {
-        instances_--;
     }
 
     static void err(const char* func)
@@ -323,8 +316,6 @@ public:
         auto dict = PyModule_GetDict(module);
         err("import");  // a bit careful doesn't hurt, isn't it ?
 
-        release();
-
         return Python(dict, "module " + name, false);
     }
 
@@ -397,7 +388,7 @@ private:
     {
         // disable DECREF since SetItem steal the reference of obj
         auto obj = Python(item, false);
-        PyList_SET_ITEM(list, i, obj);
+        PyList_SetItem(list, i, obj);
         err("list_collect");
 
         std::string name = obj.ref_.name;
@@ -419,7 +410,7 @@ public:
         std::string name;
 
         if constexpr(sizeof...(Args))
-            name = list_collect(list, 0, items...);
+            name = list_collect(ptr, 0, items...);
 
         return Python(ptr, "[" + name + "]", true);
     }
@@ -476,47 +467,71 @@ public:
         initialize();
         const auto ret = PyUnicode_FromFormat(format.c_str(), args...);
         err("Python");
-        release();
 
         return Python(ret, "format \"" + format + "\"", true);
     }
 
-    /// convertion constructors
-    # define PYTHON(TYPE, EXPR, NAME)                                   \
-        Python(TYPE t, const bool is_ref = true)                        \
-        {                                                               \
-            initialize();                                               \
-                                                                        \
-            PyObject* ret = EXPR;                                       \
-            err("Python");                                              \
-                                                                        \
-            release();                                                  \
-                                                                        \
-            ref_ = PyRef(ret, #NAME"(" + to_string(t) + ")", is_ref);    \
-        }
-
-    // string
-             PYTHON(const std::string&, PyUnicode_FromString(t.c_str()), string)
-    explicit PYTHON(const char*, PyUnicode_FromString(t), string)
-    explicit PYTHON(const std::filesystem::path&, PyUnicode_FromString(t.c_str()), path)
-    // floatant
-    explicit PYTHON(const float, PyFloat_FromDouble(t), float)
-    explicit PYTHON(const double, PyFloat_FromDouble(t), double)
-    // unsigned
-    explicit PYTHON(const std::size_t, PyLong_FromSize_t(t), size_t)
-    // signed
-    explicit PYTHON(const int, PyLong_FromLong(t), int)
-    explicit PYTHON(const long int, PyLong_FromLong(t), long)
-    explicit PYTHON(const long long int, PyLong_FromLongLong(t), longlong)
-    template <typename T>
-    explicit PYTHON(PyIndexProxy<T>&, t, Index)
-
-    explicit Python(const bool t, const bool is_ref = true)
+    /*===== CONSTRUCTORS =====*/
+    Python(const std::string& t, const bool is_ref = true)
     {
-        if (t)
-            ref_ = PyRef(True, "True", is_ref);
-        else
-            ref_ = PyRef(False, "False", is_ref);
+        initialize();
+        ref_ = PyRef(PyUnicode_FromString(t.c_str()), "\"" + t + "\"", is_ref);
+        err("Python");
+    }
+
+    explicit Python(const std::filesystem::path& t, const bool is_ref = true)
+    {
+        initialize();
+        ref_ = PyRef(PyUnicode_FromString(t.c_str()), "\"" + t.string() + "\"", is_ref);
+        err("Python");
+    }
+
+    // unified interface to get rid of ambiguous overloads
+    template <typename T>
+    explicit Python(const T t, const bool is_ref = true)
+    {
+        initialize();
+             if constexpr(std::is_same<T, char*>::value || std::is_same<T, const char*>::value)
+            ref_ = PyRef(PyUnicode_FromString(t), "\"" + to_string(t) + "\"", is_ref);
+        else if constexpr(std::is_same<T, float>::value)
+            ref_ = PyRef(PyFloat_FromDouble(t), to_string(t) + "f", is_ref);
+        else if constexpr(std::is_same<T, double>::value)
+            ref_ = PyRef(PyFloat_FromDouble(t), to_string(t), is_ref);
+        else if constexpr(std::is_same<T, long double>::value)
+            ref_ = PyRef(PyFloat_FromDouble(t), to_string(t) + "l", is_ref);
+        else if constexpr(std::is_same<T, int>::value)
+            ref_ = PyRef(PyLong_FromLong(t), to_string(t), is_ref);
+        else if constexpr(std::is_same<T, long>::value)
+            ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "l", is_ref);
+        else if constexpr(std::is_same<T, long long>::value)
+            ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ll", is_ref);
+        else if constexpr(std::is_same<T, unsigned int>::value)
+            ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "u", is_ref);
+        else if constexpr(std::is_same<T, unsigned long>::value)
+            ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ul", is_ref);
+        else if constexpr(std::is_same<T, unsigned long long>::value)
+            ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ull", is_ref);
+        // bool was too tedious to let alone because of multiple convertions to it
+        else if constexpr(std::is_same<T, bool>::value)
+        {
+            if (t)
+                ref_ = PyRef(True, "True", false);
+            else
+                ref_ = PyRef(False, "False", false);
+        }
+        else std::logic_error("Tried to convert unimplemented type to Python type");
+
+        // mute unused is_ref if not used
+        (void) is_ref;
+
+        err("Python");
+    }
+
+    template <typename T>
+    explicit Python(PyIndexProxy<T>& t, const bool is_ref = true)
+    {
+        *this = t;
+        (void) is_ref;
     }
 
     /// Default constructor
@@ -553,15 +568,9 @@ public:
         return ref_;
     }
 
-    ~Python(void)
-    {
-        release();
-    }
-
     /// Release the ressources of the global Python instance
     static void terminate(void)
     {
-        assert(instances_ == 0 && "Instances still running, kill them before shutting down");
         Py_Finalize();
         initialized_ = false;
     }
@@ -691,7 +700,6 @@ public:
 
 private:
     static inline bool initialized_;
-    static inline std::size_t instances_;
 
     PyRef ref_;
 
