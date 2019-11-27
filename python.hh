@@ -370,6 +370,8 @@ public:
     template <typename ...Args>
     static Python tuple(Args... items)
     {
+        initialize();
+
         auto ptr = PyTuple_New(sizeof...(Args));
         err("tuple");
 
@@ -404,6 +406,8 @@ public:
     template <typename ...Args>
     static Python list(Args... items)
     {
+        initialize();
+
         auto ptr = PyList_New(sizeof...(Args));
         err("list");
 
@@ -439,6 +443,8 @@ public:
     template <typename ...Args>
     static Python dict(Args... items)
     {
+        initialize();
+
         auto ptr = PyDict_New();
         err("dict");
 
@@ -604,7 +610,7 @@ public:
         return ret;
     }
 
-    std::size_t size(void) const
+    auto size(void) const
     {
         auto ret = PyObject_Size(ref_.ptr);
         err("size");
