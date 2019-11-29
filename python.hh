@@ -25,7 +25,8 @@
 // Construction and Destruction are the creation and release of the Python object
 // To be noted, the object can be destroyed, but still held by another object
 /// Enable logging of construction and destruction
-//# define PYDEBUG_OBJ
+//# define PYDEBUG_CONST
+//# define PYDEBUG_DEST
 
 struct PyRef
 {
@@ -39,7 +40,7 @@ struct PyRef
         {
             if (counter)
             {
-                # ifdef PYDEBUG_OBJ
+                # ifdef PYDEBUG_CONST
                 if (*counter == 0)
                     std::cout << "Construction of " << name << std::endl;
                 # endif
@@ -113,7 +114,7 @@ struct PyRef
         {
             Py_XDECREF(ptr);
 
-            # ifdef PYDEBUG_OBJ
+            # ifdef PYDEBUG_DEST
             std::cout << "Destruction of " << name << std::endl;
             # endif
         }
@@ -166,7 +167,7 @@ private:
     static std::string to_string(const std::string& s) { return "\"" + s + "\""; }
     static std::string to_string(const PyRef& s) { return s.name; }
     static std::string to_string(Python& s) { return s.name(); }
-    static std::string to_string(nullptr_t) { return "NULL"; }
+    static std::string to_string(std::nullptr_t) { return "NULL"; }
     static std::string to_string(const std::filesystem::path& s) { return s.string(); }
     template <typename T>
     static std::string to_string(const T t) { return std::to_string(t); }
@@ -191,8 +192,14 @@ private:
                        || std::is_convertible<key_t, int>::value);
         }
 
+        PyIndexProxy(PyIndexProxy& proxy)
+            : PyIndexProxy(proxy.object_, proxy.type_, proxy.key_)
+        {}
+
         operator PyObject*()
         {
+            assert(object_.ptr != nullptr);
+
             PyObject* ret = nullptr;
 
             switch (type_)
@@ -222,7 +229,7 @@ private:
 
         auto& operator=(PyObject* object)
         {
-            auto key = Python(key_);
+            assert(object_.ptr != nullptr);
 
             switch (type_)
             {
@@ -280,11 +287,12 @@ private:
         }
 
     // Since we can't overload "operator.()", we need to duck-type our proxy class
-    auto operator[](const std::string& key) { return parent().operator[](key); }
-    auto operator[](const Py_ssize_t key) { return parent().operator[](key); }
+    auto operator[](const std::string& key) { return parent()[key]; }
+    auto operator[](const Py_ssize_t key) { return parent()[key]; }
     auto call(Python args = nullptr, Python kwargs = nullptr)
         { return parent().call(args, kwargs); }
     auto string(void) { return parent().string(); }
+    auto is_valid(void) { return parent().is_valid(); }
 
     private:
         PyRef object_;
@@ -302,10 +310,14 @@ private:
 
 public:
     /// Access operators
-    # define ACCESS(TYPE) auto operator[](TYPE key) { return PyIndexProxy(ref_, get_type(), key); }
+    # define ACCESS(TYPE) auto operator[](TYPE key) \
+    {                                               \
+        assert(is_valid());                         \
+        return PyIndexProxy(ref_, get_type(), key); \
+    }
     ACCESS(const std::string&)
     ACCESS(const Py_ssize_t)
-    ACCESS(const Python&)
+    ACCESS(Python&)
 
     /// Import the module \var name
     static Python import(const std::string& name)
@@ -355,6 +367,8 @@ private:
     template <typename T, typename ...Args>
     static std::string tuple_collect(PyObject* tuple, Py_ssize_t i, T& item, Args... items)
     {
+        assert(tuple != nullptr);
+
         // disable DECREF since SetItem steals the reference of obj
         auto obj = Python(item, false);
         PyTuple_SetItem(tuple, i, obj);
@@ -391,6 +405,8 @@ private:
     template <typename T, typename ...Args>
     static std::string list_collect(PyObject* list, Py_ssize_t i, T& item, Args... items)
     {
+        assert(list != nullptr);
+
         // disable DECREF since SetItem steal the reference of obj
         auto obj = Python(item, false);
         PyList_SetItem(list, i, obj);
@@ -427,6 +443,8 @@ private:
     template <typename K, typename T, typename ...Args>
     static std::string dict_collect(Python dict, K& key, T& item, Args... items)
     {
+        assert(dict != nullptr);
+
         auto k = Python(key);
         auto i = Python(item);
 
@@ -491,10 +509,43 @@ public:
         err("Python");
     }
 
+    // Generic constructor working with any type of string (as long as python support them)
+    template <typename charT>
+    Python(const std::basic_string<charT>& t, const bool is_ref = true)
+    {
+        initialize();
+        ref_ = PyRef(PyUnicode_FromKindAndData(sizeof(charT), t.c_str(), t.size()), "\"" + t + "\"", is_ref);
+        err("Python");
+    }
+
+    template <typename T>
+    Python(PyIndexProxy<T> t, const bool is_ref = true)
+    {
+        *this = t;
+        (void) is_ref;
+    }
+
+    Python(const PyRef& ref)
+        : ref_(ref)
+    {}
+
+    /// Default constructor
+    Python(void)
+    {}
+
+    /// Default constructor for nullptr (seamlessly pass nullptr)
+    Python(std::nullptr_t)
+    {}
+
+    /// Copy constructor
+    Python(const Python& o)
+        : ref_(o.ref_)
+    {}
+
     explicit Python(const std::filesystem::path& t, const bool is_ref = true)
     {
         initialize();
-        ref_ = PyRef(PyUnicode_FromString(t.c_str()), "\"" + t.string() + "\"", is_ref);
+        ref_ = PyRef(PyUnicode_FromKindAndData(sizeof(std::filesystem::path::value_type), t.c_str(), t.string().size()), "\"" + t.string() + "\"", is_ref);
         err("Python");
     }
 
@@ -502,6 +553,15 @@ public:
     template <typename T, typename B = typename std::remove_cv<T>::type>
     explicit Python(const T t, const bool is_ref = true)
     {
+        // forbid this contructor to supplant the other ones
+        static_assert(std::is_same<B, PyRef>::value == false
+                   && std::is_same<B, Python>::value == false
+                   && std::is_same<B, std::string>::value == false
+                   && std::is_same<B, std::nullptr_t>::value == false
+                   && std::is_same<B, PyIndexProxy<std::string>>::value == false
+                   && std::is_same<B, PyIndexProxy<Python>>::value == false
+                   && std::is_same<B, PyIndexProxy<Py_ssize_t>>::value == false);
+
         initialize();
              if constexpr(std::is_same<B, char*>::value || std::is_same<T, const char*>::value)
             ref_ = PyRef(PyUnicode_FromString(t), to_string(t), is_ref);
@@ -527,12 +587,15 @@ public:
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ul", is_ref);
         else if constexpr(std::is_same<B, unsigned long long>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ull", is_ref);
+        else if constexpr(std::is_same<B, Py_ssize_t>::value)
+            ref_ = PyRef(PyLong_FromSsize_t(t), to_string(t) + "ssz", is_ref);
         // bool was too tedious to let alone because of multiple convertions to it
         else if constexpr(std::is_same<B, bool>::value)
             ref_ = t ? True : False;
+        // TODO: add initializer list support
         // TODO: add array, vector, deque, forward_list, list, set, map support
         // in case you didn't activate unused variables
-        else std::logic_error("Tried to convert unimplemented type to Python type");
+        else throw std::logic_error("Tried to convert unimplemented type to Python type");
 
         // mute unused is_ref if not used (like in bool's case)
         (void) is_ref;
@@ -540,32 +603,14 @@ public:
         err("Python");
     }
 
-    template <typename T>
-    explicit Python(PyIndexProxy<T>& t, const bool is_ref = true)
+/*    template <typename T>
+    Python(const std::initializer_list<T>& t)
     {
-        *this = t;
-        (void) is_ref;
-    }
-
-    /// Default constructor
-    Python(void)
-    {}
-
-    /// Default constructor for nullptr (seamlessly pass nullptr)
-    Python(nullptr_t)
-    {}
-
-    /// Copy constructor
-    Python(const Python& o)
-        : ref_(o.ref_)
-    {}
+        *this = list(std::forward<T>(t));
+    }*/
 
     Python(PyObject* ptr, const std::string& name, const bool is_ref)
         : ref_(ptr, name, is_ref)
-    {}
-
-    Python(const PyRef& ref)
-        : ref_(ref)
     {}
 
     /// Copy operator
@@ -600,6 +645,8 @@ public:
 
     Type get_type(void)
     {
+        assert(is_valid());
+
         if (PyDict_Check(ref_))
             return Type::Dict;
         else if (PySequence_Check(ref_))
@@ -611,6 +658,8 @@ public:
     /*===== object =====*/
     bool hasattr(const std::string& name)
     {
+        assert(is_valid());
+
         auto ret = PyObject_HasAttrString(ref_, name.c_str());
         err("hasattr");
 
@@ -619,6 +668,8 @@ public:
 
     auto size(void) const
     {
+        assert(is_valid());
+
         auto ret = PyObject_Size(ref_.ptr);
         err("size");
 
@@ -628,6 +679,10 @@ public:
     /*===== function =====*/
     Python call(Python args = nullptr, Python kwargs = nullptr)
     {
+        assert(is_valid());
+
+        auto tup = args;
+
         // args must be at least an empty tuple
         // FYI, not being an iterable object raise a MemoryError
         if (args.is_valid() == false)
@@ -636,24 +691,33 @@ public:
         auto ret = PyObject_Call(ref_, args, kwargs);
         err("call");
 
-        return Python(ret, "return of " + name(), true);
+        auto nargs = args.name();
+        if (kwargs)
+        {
+            nargs.pop_back();       // remove ending parenthesis
+
+            if (tup.is_valid())     // add "," to make distinction with args
+                nargs += ", ";
+
+            // add kwargs
+            nargs += kwargs.name().substr(1, kwargs.name().size() - 2) + ")";
+        }
+
+        return Python(ret, name() + nargs, true);
     }
 
     Python call(const std::string& name, Python args = nullptr, Python kwargs = nullptr)
     {
-        return operator[](name).call(args, kwargs);
-    }
+        assert(is_valid());
 
-    template <typename ...Args>
-    Python call_format(const std::string& format, Args... args) const
-    {
-        auto py_args = build_value(format, args...);
-        return call(py_args);
+        return operator[](name).call(args, kwargs);
     }
 
     /*===== conversions =====*/
     ssize_t to_ssize_t(void)
     {
+        assert(is_valid());
+
         auto val = PyNumber_AsSsize_t(ref_, nullptr);
         err("ssize_t");
 
@@ -662,6 +726,8 @@ public:
 
     Py_UCS4* ucs4(void)
     {
+        assert(is_valid());
+
         constexpr int len = 200;
 
         Py_UCS4 buffer[len];
