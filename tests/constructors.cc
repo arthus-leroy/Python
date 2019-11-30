@@ -6,6 +6,7 @@ int main()
 
     Python(std::string("This should work, nah ?"));
     Python("Don't you dare segfault on me");
+    Python('f');
     Python(std::filesystem::path("/perfectly/valid/path_or_not"));
     Python(0.001f);
     Python(0.001);
@@ -17,4 +18,5 @@ int main()
     // FIXME: Python(sys["stderr"]) fails to compile miserably
     Python{sys["stderr"]};
     Python(true);
+//    Python({1, 2, 3, 4, 5, 6});
 }
