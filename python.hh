@@ -162,15 +162,23 @@ private:
         }
     }
 
-    static std::string to_string(const char s) { return "\"" + std::string(1, s) + "\""; }
-    static std::string to_string(const char* s) { return "\"" + std::string(s) + "\""; }
-    static std::string to_string(const std::string& s) { return "\"" + s + "\""; }
-    static std::string to_string(const PyRef& s) { return s.name; }
-    static std::string to_string(Python& s) { return s.name(); }
-    static std::string to_string(std::nullptr_t) { return "NULL"; }
-    static std::string to_string(const std::filesystem::path& s) { return s.string(); }
+    static std::string to_string(const char s, const bool quotes = true)
+        { return quotes ? "\"" + std::string(1, s) + "\"" : std::string(1, s); }
+    static std::string to_string(const std::string& s, const bool quotes = true)
+        { return quotes ? "\"" + s + "\"" : s; }
+    static std::string to_string(const char* s, const bool quotes = true)
+        { return to_string(std::string(s), quotes); }
+    static std::string to_string(const PyRef& s, const bool quotes = false)
+        { (void) quotes; return s.name; }
+    static std::string to_string(Python& s, const bool quotes = false)
+        { (void) quotes; return s.name(); }
+    static std::string to_string(std::nullptr_t, const bool quotes = false)
+        { (void) quotes; return "NULL"; }
+    static std::string to_string(const std::filesystem::path& s, const bool quotes = false)
+        { (void) quotes; return s.string(); }
     template <typename T>
-    static std::string to_string(const T t) { return std::to_string(t); }
+    static std::string to_string(const T t, const bool quotes = false)
+        { (void) quotes; return std::to_string(t); }
 
     template <typename key_t>
     class PyIndexProxy
@@ -224,7 +232,10 @@ private:
         {
             PyObject* ret = *this;
 
-            return Python(ret, object_.name + "[" + to_string(key_) + "]", false);
+            if (type_ == Type::Object)
+                return Python(ret, object_.name + "." + to_string(key_, false), false);
+            else
+                return Python(ret, object_.name + "[" + to_string(key_, true) + "]", false);
         }
 
         auto& operator=(PyObject* object)
@@ -233,7 +244,7 @@ private:
 
             switch (type_)
             {
-                case Type::Object:  PyObject_SetAttr(object_.ptr, Python(key_), object); break;
+                case Type::Object: PyObject_SetAttr(object_.ptr, Python(key_), object); break;
                 case Type::Dict:    PyDict_SetItem(object_.ptr, Python(key_), object); break;
                 case Type::Sequence:
                     if constexpr(std::is_convertible<key_t, Py_ssize_t>::value)
@@ -681,7 +692,7 @@ public:
     {
         assert(is_valid());
 
-        auto tup = args;
+        bool tup = args.is_valid();
 
         // args must be at least an empty tuple
         // FYI, not being an iterable object raise a MemoryError
@@ -696,7 +707,7 @@ public:
         {
             nargs.pop_back();       // remove ending parenthesis
 
-            if (tup.is_valid())     // add "," to make distinction with args
+            if (tup)                // add "," to make distinction with args
                 nargs += ", ";
 
             // add kwargs

@@ -14,3 +14,5 @@ Python:
 
 Tests:
     add PASSED's output in html report
+    find why -fdiagnostic-color don't output colored report
+    
