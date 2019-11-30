@@ -16,11 +16,17 @@
 # include <cassert>
 # include <filesystem>
 
+# include <array>
+# include <vector>
+# include <list>
+# include <map>
+
 # include "backtrace.hh"
 
 // INCREF/DECREF is any Instance of the object 
 /// Enable logging of INCREF and DECREF
-//# define PYDEBUG_REF
+//# define PYDEBUG_INCREF
+//# define PYDEBUG_DECREF
 
 // Construction and Destruction are the creation and release of the Python object
 // To be noted, the object can be destroyed, but still held by another object
@@ -48,7 +54,7 @@ struct PyRef
                 (*counter)++;
             }
 
-            # ifdef PYDEBUG_REF
+            # ifdef PYDEBUG_INCREF
             std::cout << "Incref of " << name << std::endl;
             # endif
         }
@@ -77,7 +83,7 @@ struct PyRef
         {
             (*counter)++;
 
-            # ifdef PYDEBUG_REF
+            # ifdef PYDEBUG_INCREF
             std::cout << "Incref of " << name << std::endl;
             # endif
         }
@@ -102,7 +108,7 @@ struct PyRef
         if (counter)
             (*counter)--;
 
-        # ifdef PYDEBUG_REF
+        # ifdef PYDEBUG_DECREF
         if (counter)
         {
             std::cout << "Decref of " << name;
@@ -452,17 +458,17 @@ public:
 private:
     /// Collect the args (key, value pairs) and put them into the dict
     template <typename K, typename T, typename ...Args>
-    static std::string dict_collect(Python dict, K& key, T& item, Args... items)
+    static std::string dict_collect(Python& dict, K k, T i, Args... items)
     {
         assert(dict != nullptr);
 
-        auto k = Python(key);
-        auto i = Python(item);
+        auto key = Python(k);
+        auto item = Python(i);
 
-        dict[k] = i;
+        dict[key] = item;
         err("dict_collect");
 
-        std::string name = k.ref_.name + ": " + i.ref_.name;
+        std::string name = key.ref_.name + ": " + item.ref_.name;
 
         if constexpr(sizeof...(Args))
             name += ", " + dict_collect(dict, items...);
@@ -480,12 +486,11 @@ public:
         auto ptr = PyDict_New();
         err("dict");
 
-        std::string name;
-
+        auto obj = Python(ptr, "", true);
         if constexpr(sizeof...(Args))
-            name = dict_collect(Python(ptr), items...);
-
-        return Python(ptr, "{" + name + "}", true);
+            obj.ref_.name = dict_collect(obj, items...);
+    
+        return obj;
     }
 
     /// Create Python value from format
@@ -518,6 +523,50 @@ public:
         initialize();
         ref_ = PyRef(PyUnicode_FromString(t.c_str()), "\"" + t + "\"", is_ref);
         err("Python");
+    }
+
+    // take care of initializer-list too
+    template <typename T, std::size_t N>
+    Python(const std::array<T, N>& v)
+    {
+        *this = list(std::forward_as_tuple(v));
+    }
+
+    // take care of initializer-list too
+    template <typename T>
+    Python(const std::vector<T>& v)
+    {
+        *this = list(std::forward_as_tuple(v));
+    }
+
+    template <typename T>
+    Python(const std::list<T>& v)
+    {
+        *this = list(std::forward_as_tuple(v));
+    }
+
+    template <typename K, typename T>
+    auto flatten_pairs(const std::pair<K, T>& t)
+    {
+        return std::tuple(t.first, t.second);
+    }
+
+    template <typename K, typename T, typename ...Args>
+    auto flatten_pairs(const std::pair<K, T>& t, const Args ...args)
+    {
+        return std::tuple_cat(std::tuple(t.first, t.second), flatten_pairs(args...));
+    }
+
+    template <typename K, typename T>
+    auto flatten(const std::map<K, T>& m)
+    {
+        return flatten_pairs(std::forward_as_tuple(m));
+    }
+
+    template <typename K, typename T>
+    Python(const std::map<K, T>& v)
+    {
+        *this = dict(flatten(v));
     }
 
     // Generic constructor working with any type of string (as long as python support them)
@@ -613,12 +662,6 @@ public:
 
         err("Python");
     }
-
-/*    template <typename T>
-    Python(const std::initializer_list<T>& t)
-    {
-        *this = list(std::forward<T>(t));
-    }*/
 
     Python(PyObject* ptr, const std::string& name, const bool is_ref)
         : ref_(ptr, name, is_ref)
