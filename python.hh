@@ -31,8 +31,49 @@
 // Construction and Destruction are the creation and release of the Python object
 // To be noted, the object can be destroyed, but still held by another object
 /// Enable logging of construction and destruction
-//# define PYDEBUG_CONST
+# define PYDEBUG_CONST
 //# define PYDEBUG_DEST
+
+namespace
+{
+    [[maybe_unused]] std::string get_typename(const char* s, unsigned skips)
+    {
+        char* start = const_cast<char*>(s);
+        char* end = const_cast<char*>(s);
+
+        for (; *start; start++)
+            if (*start == '=')
+            {
+                if (skips)
+                    skips--;
+                else
+                    break;
+            }
+
+        if (*start)
+            start++;
+
+        end = start;
+
+        while (*end && *end != ';')
+            end++;
+
+        return std::string(start, end);
+    }
+
+    # define GET_TYPENAME(I) get_typename(__PRETTY_FUNCTION__, I)
+
+    template <typename T>
+    auto is_iterable_type() -> decltype(
+        std::begin(std::declval<T&>()) != std::end(std::declval<T&>()), // operator!=
+        void(),
+        ++std::declval<decltype(std::begin(std::declval<T&>()))&>(),    // operator++
+        void(*std::begin(std::declval<T&>())),                          // operator*
+        std::true_type{});
+
+    template <typename T>
+    using is_iterable = decltype(is_iterable_type<T>());
+}
 
 struct PyRef
 {
@@ -206,10 +247,6 @@ private:
                        || std::is_convertible<key_t, int>::value);
         }
 
-        PyIndexProxy(PyIndexProxy& proxy)
-            : PyIndexProxy(proxy.object_, proxy.type_, proxy.key_)
-        {}
-
         operator PyObject*()
         {
             assert(object_.ptr != nullptr);
@@ -273,7 +310,7 @@ private:
         // FIXME: ambiguous situations, risk of error
         // auto proxy = PyIndexProxy()  -> assignation
         // proxy = PyIndexProxy()       -> item setter
-        auto& operator=(PyIndexProxy& proxy)
+        auto& operator=(PyIndexProxy<key_t>&& proxy)
         {
             // setter
             if (object_)
@@ -285,6 +322,8 @@ private:
                 type_ = proxy.type_;
                 key_ = proxy.key_;
             }
+
+            return *this;
         }
 
         template <typename T>
@@ -438,7 +477,7 @@ private:
     }
 
 public:
-    /// Create a tuple from all the passed objects
+    /// Create a list from all the passed objects
     template <typename ...Args>
     static Python list(Args... items)
     {
@@ -452,6 +491,33 @@ public:
         if constexpr(sizeof...(Args))
             name = list_collect(ptr, 0, items...);
 
+        return Python(ptr, "[" + name + "]", true);
+    }
+
+    // Overload of list for iterable
+    template <typename Iterable>
+    static Python list(const Iterable& i)
+    {
+        static_assert(is_iterable<Iterable>::value);
+
+        initialize();
+
+        auto ptr = PyList_New(i.size());
+        err("dict");
+
+        std::string name;
+
+        std::size_t c = 0;
+        bool first = true;
+        for (const auto& e : i)
+        {
+            if (first == false)
+                name += ", ";
+
+            name += list_collect(ptr, c++,  e);
+            first = false;
+        }
+    
         return Python(ptr, "[" + name + "]", true);
     }
 
@@ -476,8 +542,23 @@ private:
         return name;
     }
 
+    /// Overload of dict_collect for pair
+    template <typename K, typename T>
+    static std::string dict_collect(Python& dict, const std::pair<K, T>& p)
+    {
+        assert(dict != nullptr);
+
+        auto key = Python(p.first);
+        auto item = Python(p.second);
+
+        dict[key] = item;
+        err("dict_collect");
+
+        return key.ref_.name + ": " + item.ref_.name;
+    }
+
 public:
-    /// Create a tuple from all the passed objects
+    /// Create a dictionnary from all the passed objects
     template <typename ...Args>
     static Python dict(Args... items)
     {
@@ -486,9 +567,31 @@ public:
         auto ptr = PyDict_New();
         err("dict");
 
-        auto obj = Python(ptr, "", true);
+        auto obj = Python(ptr, "dict", true);
         if constexpr(sizeof...(Args))
             obj.ref_.name = dict_collect(obj, items...);
+    
+        return obj;
+    }
+
+    // Overload of dict for iterable
+    template <typename Iterable>
+    static Python dict(const Iterable& i)
+    {
+        static_assert(is_iterable<Iterable>::value);
+
+        initialize();
+
+        auto ptr = PyDict_New();
+        err("dict");
+
+        auto obj = Python(ptr, "dict", true);
+
+        if (i.size())
+            obj.ref_.name = dict_collect(obj, *i.begin());
+
+        for (const auto& e : i)
+            obj.ref_.name += ", " + dict_collect(obj, e);
     
         return obj;
     }
@@ -526,47 +629,35 @@ public:
     }
 
     // take care of initializer-list too
+    template <typename T>
+    Python(std::vector<T> v)
+    {
+        *this = list(v);
+    }
+
+    // avoid ambiguouty with vector-like (like string) structures and vector
+    template <typename T>
+    Python(std::initializer_list<T> v)
+    {
+        *this = list(v);
+    }
+
     template <typename T, std::size_t N>
     Python(const std::array<T, N>& v)
     {
-        *this = list(std::forward_as_tuple(v));
-    }
-
-    // take care of initializer-list too
-    template <typename T>
-    Python(const std::vector<T>& v)
-    {
-        *this = list(std::forward_as_tuple(v));
+        *this = list(v);
     }
 
     template <typename T>
     Python(const std::list<T>& v)
     {
-        *this = list(std::forward_as_tuple(v));
-    }
-
-    template <typename K, typename T>
-    auto flatten_pairs(const std::pair<K, T>& t)
-    {
-        return std::tuple(t.first, t.second);
-    }
-
-    template <typename K, typename T, typename ...Args>
-    auto flatten_pairs(const std::pair<K, T>& t, const Args ...args)
-    {
-        return std::tuple_cat(std::tuple(t.first, t.second), flatten_pairs(args...));
-    }
-
-    template <typename K, typename T>
-    auto flatten(const std::map<K, T>& m)
-    {
-        return flatten_pairs(std::forward_as_tuple(m));
+        *this = list(v);
     }
 
     template <typename K, typename T>
     Python(const std::map<K, T>& v)
     {
-        *this = dict(flatten(v));
+        *this = dict(v);
     }
 
     // Generic constructor working with any type of string (as long as python support them)
@@ -652,10 +743,8 @@ public:
         // bool was too tedious to let alone because of multiple convertions to it
         else if constexpr(std::is_same<B, bool>::value)
             ref_ = t ? True : False;
-        // TODO: add initializer list support
-        // TODO: add array, vector, deque, forward_list, list, set, map support
         // in case you didn't activate unused variables
-        else throw std::logic_error("Tried to convert unimplemented type to Python type");
+        else throw std::logic_error("Tried to convert unimplemented type to Python type:" + GET_TYPENAME(0));
 
         // mute unused is_ref if not used (like in bool's case)
         (void) is_ref;
