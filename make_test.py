@@ -58,7 +58,7 @@ from os.path import splitext, join, getmtime
 from subprocess import Popen, PIPE
 from sys import stdout as out, stderr as err
 from pytest import fail
-from logging import warning
+from logging import info, INFO
 
 # return the content in green bold if fd is a tty
 def green(content: str, fd: int):
@@ -120,7 +120,7 @@ def exec(binary: str):
 
     print("%s: %s" %(binary, green("PASSED", out.fileno())))
     # TODO: pass stdout to passed tests to check if it matches expected output
-    warning(stdout.decode())
+    info(stdout.decode())
 """
 
 # generate tests.py, the file in which all tests are put
@@ -136,7 +136,8 @@ with open("tests.py", 'w') as f:
     for file in listdir(TEST_DIR):
         parts = splitext(file)
         if parts[1] == ".cc":
-            print("def test_%s():" %parts[0], file = f)
+            print("def test_%s(caplog):" %parts[0], file = f)
+            print("\tcaplog.set_level(INFO)", file = f)
             print("\tbin = make_binary(\"%s\", \"%s\")" %(file, TEST_DIR), file = f)
             print("\texec(bin)\n", file = f)
 
