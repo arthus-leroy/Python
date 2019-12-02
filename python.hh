@@ -237,7 +237,7 @@ private:
         }
 
     public:
-        PyIndexProxy(PyRef& object, const Type type, const key_t& key)
+        PyIndexProxy(const PyRef& object, const Type type, const key_t& key)
             : object_(object), type_(type), key_(key)
         {
             // restrict types (until constraints in C++20)
@@ -246,6 +246,10 @@ private:
                        || std::is_convertible<key_t, PyObject*>::value
                        || std::is_convertible<key_t, int>::value);
         }
+
+        PyIndexProxy(const PyIndexProxy<key_t>& proxy)
+            : PyIndexProxy(proxy.object_, proxy.type_, proxy.key_)
+        {}
 
         operator PyObject*()
         {
@@ -310,7 +314,7 @@ private:
         // FIXME: ambiguous situations, risk of error
         // auto proxy = PyIndexProxy()  -> assignation
         // proxy = PyIndexProxy()       -> item setter
-        auto& operator=(PyIndexProxy<key_t>&& proxy)
+        auto& operator=(PyIndexProxy<key_t> proxy)
         {
             // setter
             if (object_)
@@ -627,7 +631,7 @@ public:
     /*===== CONSTRUCTORS =====*/
     // take care of initializer-list too
     template <typename T>
-    Python(std::vector<T> v)
+    Python(const std::vector<T>& v)
     {
         *this = list(v);
         assert(is_valid());
@@ -635,7 +639,7 @@ public:
 
     // avoid ambiguouty with vector-like (like string) structures and vector
     template <typename T>
-    Python(std::initializer_list<T> v)
+    Python(const std::initializer_list<T>& v)
     {
         *this = list(v);
         assert(is_valid());
