@@ -136,8 +136,7 @@ with open("tests.py", 'w') as f:
     for file in listdir(TEST_DIR):
         parts = splitext(file)
         if parts[1] == ".cc":
-            print("def test_%s(caplog):" %parts[0], file = f)
-            print("\tcaplog.set_level(INFO)", file = f)
+            print("def test_%s():" %parts[0], file = f)
             print("\tbin = make_binary(\"%s\", \"%s\")" %(file, TEST_DIR), file = f)
             print("\texec(bin)\n", file = f)
 
