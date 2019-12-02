@@ -31,7 +31,7 @@
 // Construction and Destruction are the creation and release of the Python object
 // To be noted, the object can be destroyed, but still held by another object
 /// Enable logging of construction and destruction
-# define PYDEBUG_CONST
+//# define PYDEBUG_CONST
 //# define PYDEBUG_DEST
 
 namespace
