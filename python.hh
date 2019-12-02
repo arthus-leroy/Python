@@ -73,6 +73,26 @@ namespace
 
     template <typename T>
     using is_iterable = decltype(is_iterable_type<T>());
+
+    std::string escape(const std::string str)
+    {
+        std::string ret(str);
+
+        for (std::size_t i = 0; i < ret.size(); i++)
+            switch (ret[i])
+            {
+                case '\?':  ret.insert(i, "\\"); ret.replace(++i, 1, "?");  break;
+                case '\a':  ret.insert(i, "\\"); ret.replace(++i, 1, "a");  break;
+                case '\b':  ret.insert(i, "\\"); ret.replace(++i, 1, "b");  break;
+                case '\f':  ret.insert(i, "\\"); ret.replace(++i, 1, "f");  break;
+                case '\n':  ret.insert(i, "\\"); ret.replace(++i, 1, "n");  break;
+                case '\r':  ret.insert(i, "\\"); ret.replace(++i, 1, "r");  break;
+                case '\t':  ret.insert(i, "\\"); ret.replace(++i, 1, "t");  break;
+                case '\v':  ret.insert(i, "\\"); ret.replace(++i, 1, "v");  break;
+            }
+
+        return ret;
+    }
 }
 
 struct PyRef
@@ -80,7 +100,7 @@ struct PyRef
     using ref_counter_t = std::shared_ptr<std::size_t>;
 
     PyRef(PyObject* ptr, ref_counter_t counter, const std::string& name, const bool is_ref)
-        : ptr(ptr), counter(counter), name(name), is_ref(is_ref)
+        : ptr(ptr), counter(counter), name(escape(name)), is_ref(is_ref)
     {
         // mute NULL INCREF
         if (ptr)
@@ -89,14 +109,14 @@ struct PyRef
             {
                 # ifdef PYDEBUG_CONST
                 if (*counter == 0)
-                    std::cout << "Construction of " << name << std::endl;
+                    std::cout << "Construction of " << this->name << std::endl;
                 # endif
 
                 (*counter)++;
             }
 
             # ifdef PYDEBUG_INCREF
-            std::cout << "Incref of " << name << std::endl;
+            std::cout << "Incref of " << this->name << std::endl;
             # endif
         }
     }
@@ -442,6 +462,20 @@ private:
         return name;
     }
 
+    template <std::size_t size, std::size_t i = 0, typename ...Args>
+    static std::string tuple_collect(PyObject* ptr, const std::tuple<Args...>& tuple)
+    {
+        auto obj = Python(std::get<i>(tuple), false);
+        PyTuple_SetItem(ptr, i, obj);
+        err("tuple");
+
+        auto name = obj.name();
+        if constexpr(i + 1 < size)
+            name += ", " + tuple_collect<size, i + 1>(ptr, tuple);
+
+        return name;
+    }
+
 public:
     /// Create a tuple from all the passed objects
     template <typename ...Args>
@@ -456,6 +490,23 @@ public:
 
         if constexpr(sizeof...(Args))
             name = tuple_collect(ptr, 0, items...);
+
+        return Python(ptr, "(" + name + ")", true);
+    }
+
+    /// Create a tuple from all the passed object
+    template <typename ...Args>
+    static Python tuple(const std::tuple<Args...>& t)
+    {
+        initialize();
+
+        constexpr auto size = std::tuple_size<std::tuple<Args...>>::value;
+        auto ptr = PyTuple_New(size);
+        err("tuple");
+
+        std::string name;
+        if (size)
+            name = tuple_collect<size>(ptr, t);
 
         return Python(ptr, "(" + name + ")", true);
     }
@@ -663,6 +714,13 @@ public:
     Python(const std::map<K, T>& v)
     {
         *this = dict(v);
+        assert(is_valid());
+    }
+
+    template <typename ...Args>
+    Python(const std::tuple<Args...>& v)
+    {
+        *this = tuple(v);
         assert(is_valid());
     }
 
