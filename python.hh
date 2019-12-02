@@ -36,7 +36,7 @@
 
 namespace
 {
-    [[maybe_unused]] std::string get_typename(const char* s, unsigned skips)
+    [[maybe_unused]] std::string get_typename(const char* s, int skips = 0)
     {
         char* start = const_cast<char*>(s);
         char* end = const_cast<char*>(s);
@@ -587,11 +587,15 @@ public:
 
         auto obj = Python(ptr, "dict", true);
 
-        if (i.size())
-            obj.ref_.name = dict_collect(obj, *i.begin());
-
+        bool first = true;
         for (const auto& e : i)
-            obj.ref_.name += ", " + dict_collect(obj, e);
+        {
+            if (first == false)
+                obj.ref_.name += ", ";
+
+            obj.ref_.name += dict_collect(obj, e);
+            first = false;
+        }
     
         return obj;
     }
@@ -621,18 +625,12 @@ public:
     }
 
     /*===== CONSTRUCTORS =====*/
-    Python(const std::string& t, const bool is_ref = true)
-    {
-        initialize();
-        ref_ = PyRef(PyUnicode_FromString(t.c_str()), "\"" + t + "\"", is_ref);
-        err("Python");
-    }
-
     // take care of initializer-list too
     template <typename T>
     Python(std::vector<T> v)
     {
         *this = list(v);
+        assert(is_valid());
     }
 
     // avoid ambiguouty with vector-like (like string) structures and vector
@@ -640,24 +638,28 @@ public:
     Python(std::initializer_list<T> v)
     {
         *this = list(v);
+        assert(is_valid());
     }
 
     template <typename T, std::size_t N>
     Python(const std::array<T, N>& v)
     {
         *this = list(v);
+        assert(is_valid());
     }
 
     template <typename T>
     Python(const std::list<T>& v)
     {
         *this = list(v);
+        assert(is_valid());
     }
 
     template <typename K, typename T>
     Python(const std::map<K, T>& v)
     {
         *this = dict(v);
+        assert(is_valid());
     }
 
     // Generic constructor working with any type of string (as long as python support them)
@@ -750,6 +752,9 @@ public:
         (void) is_ref;
 
         err("Python");
+
+        // verify validity after (they must all be valid)
+        assert(is_valid());
     }
 
     Python(PyObject* ptr, const std::string& name, const bool is_ref)
