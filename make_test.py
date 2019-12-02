@@ -11,7 +11,7 @@ TEST_DIR = "tests"
 PKG = check_output(("pkg-config", "--cflags", "--libs", "python3")).decode().split(' ')[:-1]
 # TODO: find why -fdiagnostic-color don't output colored report
 MAKE_CMD = ("g++", "-g3", "-Wall", "-Wextra", "-Werror", "-pedantic", "-std=c++17", \
-            "-I.", "-DTRACEBACK", "-fdiagnostics-color=auto", *PKG)
+            "-I.", "-DTRACEBACK", "-DPYDEBUG_CONST", "-fdiagnostics-color=auto", *PKG)
 
 # files used in every test and that need to be compiled and liked statically
 invariant_files = ("python.hh", "backtrace.hh", "backtrace.cc")
@@ -58,7 +58,7 @@ from os.path import splitext, join, getmtime
 from subprocess import Popen, PIPE
 from sys import stdout as out, stderr as err
 from pytest import fail
-from conftest import catch_log
+from logging import warning
 
 # return the content in green bold if fd is a tty
 def green(content: str, fd: int):
@@ -120,7 +120,7 @@ def exec(binary: str):
 
     print("%s: %s" %(binary, green("PASSED", out.fileno())))
     # TODO: pass stdout to passed tests to check if it matches expected output
-    catch_log(stdout.decode())
+    warning(stdout.decode())
 """
 
 # generate tests.py, the file in which all tests are put
