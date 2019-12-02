@@ -5,7 +5,6 @@ Python:
     Add operator() instead of call(args, kwargs)
     For dict: change from free arguments to pairs for clarity ?
     Think about the case PyIndexProxy.operator=(PyIndexProxy)
-    Escape string in to_string (for visual reasons)
     Round the float error and remove trailing zeros when creating name
     Disable debug name if no debug option have been enabled
 
