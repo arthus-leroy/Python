@@ -20,6 +20,7 @@
 # include <vector>
 # include <list>
 # include <map>
+# include <regex>
 
 # include "backtrace.hh"
 
@@ -93,6 +94,9 @@ namespace
 
         return ret;
     }
+
+    // disabled as it litteraly *doubles* the duration of the tests
+    // const auto kwargs_regex = std::regex("\"([^\"]*)\": ");
 }
 
 struct PyRef
@@ -910,7 +914,8 @@ public:
                 nargs += ", ";
 
             // add kwargs
-            nargs += kwargs.name().substr(1, kwargs.name().size() - 2) + ")";
+            const auto kwarg = kwargs.name().substr(1, kwargs.name().size() - 1);
+            nargs += kwarg + ")";// std::regex_replace(kwarg, kwargs_regex, "$1 = ") + ")";
         }
 
         return Python(ret, name() + nargs, true);
