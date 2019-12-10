@@ -1,10 +1,8 @@
 Python:
     Copy all the methods of Python in Proxy in the Pythonway than operator[] and remove get()
     Move GetAttr and SetAttr to their respective functions ?
-    Add operator() instead of call(args, kwargs)
     For dict: change from free arguments to pairs for clarity ?
     Think about the case PyIndexProxy.operator=(PyIndexProxy)
-    Round the float error and remove trailing zeros when creating debug name
     Disable debug name if no debug option have been enabled ?
     Decide on how optional should be handled (None or skipped -> skipped = work to do for containers)
 
