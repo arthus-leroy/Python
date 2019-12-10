@@ -11,7 +11,8 @@ TEST_DIR = "tests"
 PKG = check_output(("pkg-config", "--cflags", "--libs", "python3")).decode().split(' ')[:-1]
 # TODO: find why -fdiagnostic-color don't output colored report
 MAKE_CMD = ("g++", "-g3", "-Wall", "-Wextra", "-Werror", "-pedantic", "-std=c++17", \
-            "-I.", "-DTRACEBACK", "-DPYDEBUG_CONST", "-fdiagnostics-color=auto", *PKG)
+            "-I.", "-DTRACEBACK", "-fdiagnostics-color=auto", *PKG)
+#MAKE_CMD += ("-DPYDEBUG_CONST",)
 
 # files used in every test and that need to be compiled and liked statically
 invariant_files = ("python.hh", "backtrace.hh", "backtrace.cc")
