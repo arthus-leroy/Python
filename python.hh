@@ -15,6 +15,7 @@
 # include <memory>
 # include <cassert>
 # include <filesystem>
+# include <sstream>
 
 # include <array>
 # include <vector>
@@ -248,7 +249,12 @@ private:
             return to_string(std::basic_string<T>(1, t));
         // numbers
         else
-            return std::to_string(t);
+        {
+            std::stringstream ss;
+            ss << t;
+
+            return ss.str();
+        }
     }
 
     // string-likes
@@ -923,6 +929,11 @@ public:
     operator PyObject*()
     {
         return ref_;
+    }
+
+    Python operator()(Python args = nullptr, Python kwargs = nullptr)
+    {
+        return call(args, kwargs);
     }
 
     bool is_valid(void) const
