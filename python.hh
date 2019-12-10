@@ -239,36 +239,37 @@ private:
         }
     }
 
-    // char-likes
     template <typename T>
-    static std::string to_string(const T t, [[maybe_unused]] const bool quotes = true)
+    static std::string to_string(const T t)
     {
+        // char-likes
         if constexpr(std::is_same<T, char>::value || std::is_same<T, wchar_t>::value
                   || std::is_same<T, char16_t>::value || std::is_same<T, char32_t>::value)
-            return quotes ? to_string(std::basic_string<T>(1, t)) : std::string(1, t);
+            return to_string(std::basic_string<T>(1, t));
+        // numbers
         else
             return std::to_string(t);
     }
 
     // string-likes
-    static std::string to_string(const std::string& s, const bool quotes = true)
-        { return quotes ? s : s; }
+    static std::string to_string(const std::string& s)
+        { return s; }
     template <typename char_t>
-    static std::string to_string(const std::basic_string<char_t>& s, const bool quotes = true)
-        { return quotes ? converter<char_t>.to_bytes(s) : converter<char_t>.to_bytes(s); }
+    static std::string to_string(const std::basic_string<char_t>& s)
+        { return converter<char_t>.to_bytes(s); }
     template <typename char_t>
-    static std::string to_string(const char_t* s, const bool quotes = true)
-        { return to_string(std::basic_string<char_t>(s), quotes); }
+    static std::string to_string(const char_t* s)
+        { return to_string(std::basic_string<char_t>(s)); }
 
     // misc
-    static std::string to_string(const PyRef& s, const bool quotes = false)
-        { (void) quotes; return s.name; }
-    static std::string to_string(Python& s, const bool quotes = false)
-        { (void) quotes; return s.name(); }
-    static std::string to_string(std::nullptr_t, const bool quotes = false)
-        { (void) quotes; return "NULL"; }
-    static std::string to_string(const std::filesystem::path& s, const bool quotes = false)
-        { (void) quotes; return s.string(); }
+    static std::string to_string(const PyRef& s)
+        { return s.name; }
+    static std::string to_string(Python& s)
+        { return s.name(); }
+    static std::string to_string(std::nullptr_t)
+        { return "NULL"; }
+    static std::string to_string(const std::filesystem::path& s)
+        { return s.string(); }
 
     template <typename key_t>
     class PyIndexProxy
@@ -324,9 +325,9 @@ private:
             PyObject* ret = *this;
 
             if (type_ == Type::Object)
-                return Python(ret, object_.name + "." + to_string(key_, false), false);
+                return Python(ret, object_.name + "." + to_string(key_), false);
             else
-                return Python(ret, object_.name + "[" + to_string(key_, true) + "]", false);
+                return Python(ret, object_.name + "[\"" + to_string(key_) + "\"]", false);
         }
 
         auto& operator=(PyObject* object)
@@ -837,7 +838,7 @@ public:
     explicit Python(const std::filesystem::path& t, const bool is_ref = true)
     {
         initialize();
-        ref_ = PyRef(PyUnicode_FromKindAndData(sizeof(std::filesystem::path::value_type), t.c_str(), t.string().size()), "\"" + t.string() + "\"", is_ref);
+        ref_ = PyRef(PyUnicode_FromKindAndData(sizeof(std::filesystem::path::value_type), t.c_str(), t.string().size()), "\"" + to_string(t) + "\"", is_ref);
         err("Python");
     }
 
