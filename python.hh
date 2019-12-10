@@ -20,11 +20,14 @@
 # include <vector>
 # include <list>
 # include <map>
+
 # include <regex>
+# include <locale>
+# include <codecvt>
 
 # include "backtrace.hh"
 
-// INCREF/DECREF is any Instance of the object 
+// INCREF/DECREF is any Instance of the object
 /// Enable logging of INCREF and DECREF
 //# define PYDEBUG_INCREF
 //# define PYDEBUG_DECREF
@@ -82,7 +85,6 @@ namespace
         for (std::size_t i = 0; i < ret.size(); i++)
             switch (ret[i])
             {
-                case '\?':  ret.insert(i, "\\"); ret.replace(++i, 1, "?");  break;
                 case '\a':  ret.insert(i, "\\"); ret.replace(++i, 1, "a");  break;
                 case '\b':  ret.insert(i, "\\"); ret.replace(++i, 1, "b");  break;
                 case '\f':  ret.insert(i, "\\"); ret.replace(++i, 1, "f");  break;
@@ -97,6 +99,10 @@ namespace
 
     // disabled as it litteraly *doubles* the duration of the tests
     // const auto kwargs_regex = std::regex("\"([^\"]*)\": ");
+
+    // convert from char_t -> char
+    template <typename char_t>
+    std::wstring_convert<std::codecvt_utf8<char_t>, char_t> converter;
 }
 
 struct PyRef
@@ -233,12 +239,28 @@ private:
         }
     }
 
-    static std::string to_string(const char s, const bool quotes = true)
-        { return quotes ? "\"" + std::string(1, s) + "\"" : std::string(1, s); }
+    // char-likes
+    template <typename T>
+    static std::string to_string(const T t, [[maybe_unused]] const bool quotes = true)
+    {
+        if constexpr(std::is_same<T, char>::value || std::is_same<T, wchar_t>::value
+                  || std::is_same<T, char16_t>::value || std::is_same<T, char32_t>::value)
+            return quotes ? to_string(std::basic_string<T>(1, t)) : std::string(1, t);
+        else
+            return std::to_string(t);
+    }
+
+    // string-likes
     static std::string to_string(const std::string& s, const bool quotes = true)
-        { return quotes ? "\"" + s + "\"" : s; }
-    static std::string to_string(const char* s, const bool quotes = true)
-        { return to_string(std::string(s), quotes); }
+        { return quotes ? s : s; }
+    template <typename char_t>
+    static std::string to_string(const std::basic_string<char_t>& s, const bool quotes = true)
+        { return quotes ? converter<char_t>.to_bytes(s) : converter<char_t>.to_bytes(s); }
+    template <typename char_t>
+    static std::string to_string(const char_t* s, const bool quotes = true)
+        { return to_string(std::basic_string<char_t>(s), quotes); }
+
+    // misc
     static std::string to_string(const PyRef& s, const bool quotes = false)
         { (void) quotes; return s.name; }
     static std::string to_string(Python& s, const bool quotes = false)
@@ -247,9 +269,6 @@ private:
         { (void) quotes; return "NULL"; }
     static std::string to_string(const std::filesystem::path& s, const bool quotes = false)
         { (void) quotes; return s.string(); }
-    template <typename T>
-    static std::string to_string(const T t, const bool quotes = false)
-        { (void) quotes; return std::to_string(t); }
 
     template <typename key_t>
     class PyIndexProxy
@@ -298,6 +317,7 @@ private:
             return ret;
         }
 
+        // WARNING: as it's a lazy getter, you need to force convertion if you want to keep the object
         /// Implicit convertion to Python
         operator Python()
         {
@@ -576,7 +596,7 @@ public:
             name += list_collect(ptr, c++,  e);
             first = false;
         }
-    
+
         return Python(ptr, "[" + name + "]", true);
     }
 
@@ -629,7 +649,7 @@ public:
         auto obj = Python(ptr, "dict", true);
         if constexpr(sizeof...(Args))
             obj.ref_.name = dict_collect(obj, items...);
-    
+
         return obj;
     }
 
@@ -655,7 +675,7 @@ public:
             obj.ref_.name += dict_collect(obj, e);
             first = false;
         }
-    
+
         return obj;
     }
 
@@ -683,49 +703,92 @@ public:
         return Python(ret, "format \"" + format + "\"", true);
     }
 
+    /// Release the ressources of the global Python instance
+    static void terminate(void)
+    {
+        Py_Finalize();
+        initialized_ = false;
+    }
+
     /*===== CONSTRUCTORS =====*/
-    // take care of initializer-list too
+    template <typename A, typename B>
+    Python(const std::pair<A, B>& p, const bool is_ref = true)
+    {
+        *this = tuple(p.first, p.second);
+        assert(is_valid());
+
+        if (is_ref == false)
+            ref_.is_ref = false;
+    }
+
     template <typename T>
-    Python(const std::vector<T>& v)
+    Python(const std::vector<T>& v, const bool is_ref = true)
     {
         *this = list(v);
         assert(is_valid());
+
+        if (is_ref == false)
+            ref_.is_ref = false;
     }
 
     // avoid ambiguouty with vector-like (like string) structures and vector
     template <typename T>
-    Python(const std::initializer_list<T>& v)
+    Python(const std::initializer_list<T>& v, const bool is_ref = true)
     {
         *this = list(v);
         assert(is_valid());
+
+        if (is_ref == false)
+            ref_.is_ref = false;
     }
 
     template <typename T, std::size_t N>
-    Python(const std::array<T, N>& v)
+    Python(const std::array<T, N>& v, const bool is_ref = true)
     {
         *this = list(v);
         assert(is_valid());
+
+        if (is_ref == false)
+            ref_.is_ref = false;
     }
 
     template <typename T>
-    Python(const std::list<T>& v)
+    Python(const std::list<T>& v, const bool is_ref = true)
     {
         *this = list(v);
         assert(is_valid());
+
+        if (is_ref == false)
+            ref_.is_ref = false;
     }
 
     template <typename K, typename T>
-    Python(const std::map<K, T>& v)
+    Python(const std::map<K, T>& v, const bool is_ref = true)
     {
         *this = dict(v);
         assert(is_valid());
+
+        if (is_ref == false)
+            ref_.is_ref = false;
     }
 
     template <typename ...Args>
-    Python(const std::tuple<Args...>& v)
+    Python(const std::tuple<Args...>& v, const bool is_ref = true)
     {
         *this = tuple(v);
         assert(is_valid());
+
+        if (is_ref == false)
+            ref_.is_ref = false;
+    }
+
+    template <typename T>
+    Python(const std::optional<T>& t, const bool is_ref = true)
+    {
+        if (t.has_value())
+            *this = Python(t.value(), is_ref);
+        else
+            *this = None;
     }
 
     // Generic constructor working with any type of string (as long as python support them)
@@ -733,8 +796,18 @@ public:
     Python(const std::basic_string<charT>& t, const bool is_ref = true)
     {
         initialize();
-        ref_ = PyRef(PyUnicode_FromKindAndData(sizeof(charT), t.c_str(), t.size()), "\"" + t + "\"", is_ref);
+        ref_ = PyRef(PyUnicode_FromKindAndData(sizeof(charT), t.c_str(), t.size()), "\"" + to_string(t) + "\"", is_ref);
         err("Python");
+    }
+
+    template <typename charT>
+    explicit Python(const charT* t, const bool is_ref = true)
+        : Python(std::basic_string<charT>(t), is_ref)
+    {
+        static_assert(std::is_same<charT, char>::value
+                   || std::is_same<charT, wchar_t>::value
+                   || std::is_same<charT, char16_t>::value
+                   || std::is_same<charT, char32_t>::value);
     }
 
     template <typename T>
@@ -782,32 +855,43 @@ public:
                    && std::is_same<B, PyIndexProxy<Py_ssize_t>>::value == false);
 
         initialize();
-             if constexpr(std::is_same<B, char*>::value || std::is_same<T, const char*>::value)
-            ref_ = PyRef(PyUnicode_FromString(t), to_string(t), is_ref);
-        else if constexpr(std::is_same<B, char>::value)
-            ref_ = PyRef(PyUnicode_FromStringAndSize(&t, 1), to_string(t), is_ref);
-        // TODO: add wchar_t
+        // char
+        if constexpr(std::is_same<B, char>::value || std::is_same<B, wchar_t>::value || std::is_same<B, char16_t>::value || std::is_same<B, char32_t>::value)
+            ref_ = PyRef(PyUnicode_FromKindAndData(sizeof(B), &t, 1), to_string(t), is_ref);
+        // floatant
         else if constexpr(std::is_same<B, float>::value)
             ref_ = PyRef(PyFloat_FromDouble(t), to_string(t) + "f", is_ref);
         else if constexpr(std::is_same<B, double>::value)
             ref_ = PyRef(PyFloat_FromDouble(t), to_string(t), is_ref);
         else if constexpr(std::is_same<B, long double>::value)
             ref_ = PyRef(PyFloat_FromDouble(t), to_string(t) + "l", is_ref);
-        // TODO: add short
+        // signed
+        else if constexpr(std::is_same<B, Py_ssize_t>::value)
+            ref_ = PyRef(PyLong_FromSsize_t(t), to_string(t) + "ssz", is_ref);
+        else if constexpr(std::is_same<B, int8_t>::value)
+            ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ss", is_ref);
+        else if constexpr(std::is_same<B, short>::value || std::is_same<B, int16_t>::value)
+            ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "s", is_ref);
         else if constexpr(std::is_same<B, int>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t), is_ref);
         else if constexpr(std::is_same<B, long>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "l", is_ref);
         else if constexpr(std::is_same<B, long long>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ll", is_ref);
+        // unsigned
+        else if constexpr(std::is_same<B, std::size_t>::value)
+            ref_ = PyRef(PyLong_FromSize_t(t), to_string(t) + "sz", is_ref);
+        else if constexpr(std::is_same<B, uint8_t>::value)
+            ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "uss", is_ref);
+        else if constexpr(std::is_same<B, unsigned short>::value)
+            ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "us", is_ref);
         else if constexpr(std::is_same<B, unsigned int>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "u", is_ref);
         else if constexpr(std::is_same<B, unsigned long>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ul", is_ref);
         else if constexpr(std::is_same<B, unsigned long long>::value)
             ref_ = PyRef(PyLong_FromLong(t), to_string(t) + "ull", is_ref);
-        else if constexpr(std::is_same<B, Py_ssize_t>::value)
-            ref_ = PyRef(PyLong_FromSsize_t(t), to_string(t) + "ssz", is_ref);
+
         // bool was too tedious to let alone because of multiple convertions to it
         else if constexpr(std::is_same<B, bool>::value)
             ref_ = t ? True : False;
@@ -840,13 +924,6 @@ public:
         return ref_;
     }
 
-    /// Release the ressources of the global Python instance
-    static void terminate(void)
-    {
-        Py_Finalize();
-        initialized_ = false;
-    }
-
     bool is_valid(void) const
     {
         return ref_;
@@ -857,6 +934,8 @@ public:
         return ref_.name;
     }
 
+    // FIXME: add an additional detection for classes that implements __get_item__
+    //        these classes seems like Sequence, but don't accept always Numeric key
     Type get_type(void)
     {
         assert(is_valid());
@@ -888,6 +967,13 @@ public:
         err("size");
 
         return ret;
+    }
+
+    void print(const bool repr = false, FILE* fp = stdout) const
+    {
+        PyObject_Print(ref_.ptr, fp, repr ? Py_PRINT_RAW : 0);
+        fprintf(fp, "\n");
+        err("print");
     }
 
     /*===== function =====*/
