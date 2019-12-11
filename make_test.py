@@ -121,10 +121,10 @@ def exec(binary: str):
     stdout, stderr = p.communicate()
 
     if p.returncode != 0:
-        fail_test(binary, stderr.decode())
+        fail_test(binary, "\\n%s" %stderr.decode())
 
     print("%s: %s" %(binary, green("PASSED", out.fileno())))
-    info(stdout.decode())
+    info("\\n%s" %stdout.decode())
 """
 
 # generate tests.py, the file in which all tests are put
