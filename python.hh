@@ -207,9 +207,11 @@ struct PyRef
 class Python
 {
 public:
-    using utf32_t = std::basic_string<int32_t>;
-    using utf16_t = std::basic_string<int16_t>;
-    using utf8_t = std::basic_string<int8_t>;
+    using utf32_t = std::basic_string<char32_t>;
+    using utf16_t = std::basic_string<char16_t>;
+//    using utf8_t = std::basic_string<char8_t>;    // C++20
+    using utf8_t = std::basic_string<char>;
+
     enum class Type
     {
         Object,
@@ -309,7 +311,6 @@ private:
 
             switch (type_)
             {
-                // check for presence (as it's not checked ?)
                 case Type::Object:  ret = PyObject_GetAttr(object_, Python(key_)); break;
                 case Type::Dict:
                 case Type::Sequence:ret = PyObject_GetItem(object_, Python(key_)); break;
@@ -394,6 +395,7 @@ private:
         { return parent().call(args, kwargs); }
     auto string(void) { return parent().string(); }
     auto is_valid(void) { return parent().is_valid(); }
+    auto print(void) { return parent().print(); }
 
     private:
         PyRef object_;
@@ -1043,22 +1045,42 @@ public:
     }
 
     /*===== conversions =====*/
-    bool is_true(void)
+    bool to_bool(void)
     {
         assert(is_valid());
 
         const auto ret = PyObject_IsTrue(ref_);
-        err("is_true");
+        err("to_bool");
 
         return ret;
     }
 
-    ssize_t to_ssize_t(void)
+    Py_ssize_t to_ssize_t(void)
     {
         assert(is_valid());
 
-        auto val = PyNumber_AsSsize_t(ref_, nullptr);
-        err("ssize_t");
+        auto val = PyLong_AsSsize_t(ref_);
+        err("to_ssize_t");
+
+        return val;
+    }
+
+    std::size_t to_size_t(void)
+    {
+        assert(is_valid());
+
+        auto val = PyLong_AsSize_t(ref_);
+        err("to_size_t");
+
+        return val;
+    }
+
+    double to_double(void)
+    {
+        assert(is_valid());
+
+        auto val = PyFloat_AsDouble(ref_);
+        err("to_double");
 
         return val;
     }
@@ -1076,12 +1098,14 @@ public:
         return ret;
     }
 
+    /*===== Narrowing string convertions =====*/
+    // for non-narrowing, use std::wstring_convert
     utf32_t utf32(void)
     {
         utf32_t string;
 
         for (auto c = ucs4(); *c; c++)
-            string.push_back(*c & 0xFFFFFFFF);
+            string.push_back(*c & std::numeric_limits<utf32_t::value_type>::max());
 
         return string;
     }
@@ -1091,7 +1115,7 @@ public:
         utf16_t string;
 
         for (auto c = ucs4(); *c; c++)
-            string.push_back(*c & 0xFFFF);
+            string.push_back(*c & std::numeric_limits<utf16_t::value_type>::max());
 
         return string;
     }
@@ -1101,7 +1125,7 @@ public:
         utf8_t string;
 
         for (auto c = ucs4(); *c; c++)
-            string.push_back(*c & 0xFF);
+            string.push_back(*c & std::numeric_limits<utf8_t::value_type>::max());
 
         return string;
     }
@@ -1111,7 +1135,17 @@ public:
         std::string string;
 
         for (auto c = ucs4(); *c; c++)
-            string.push_back(*c & 0xFF);
+            string.push_back(*c & std::numeric_limits<std::string::value_type>::max());
+
+        return string;
+    }
+
+    std::wstring wstring(void)
+    {
+        std::wstring string;
+
+        for (auto c = ucs4(); *c; c++)
+            string.push_back(*c & std::numeric_limits<std::wstring::value_type>::max());
 
         return string;
     }
