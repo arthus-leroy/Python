@@ -312,12 +312,7 @@ private:
                 // check for presence (as it's not checked ?)
                 case Type::Object:  ret = PyObject_GetAttr(object_, Python(key_)); break;
                 case Type::Dict:    ret = PyDict_GetItemWithError(object_, Python(key_)); break;
-                case Type::Sequence:
-                    if constexpr(std::is_convertible<key_t, Py_ssize_t>::value)
-                        ret = PySequence_GetItem(object_.ptr, key_);
-                    else
-                        PyErr_SetString(PyExc_TypeError, "list indices must be integers or slices");
-                    break;
+                case Type::Sequence:ret = PyObject_GetItem(object_, Python(key_)); break;
             }
             err("assign");
 
