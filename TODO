@@ -6,8 +6,5 @@ Python:
     Disable debug name if no debug option have been enabled ?
     Decide on how optional should be handled (None or skipped -> skipped = work to do for containers)
 
-Tests:
-    find why -fdiagnostic-color don't output colored report
-
 Other:
     make a tool that translates native python code into c++ (except some features ?)
