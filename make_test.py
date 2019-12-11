@@ -5,13 +5,16 @@ from os.path import splitext, join, getmtime
 from subprocess import Popen, PIPE, check_output, run
 from sys import stderr as err
 
+from ansi2html import Ansi2HTMLConverter as Converter
+from html import unescape
+from bs4 import BeautifulSoup
+
 import pytest_html
 
 TEST_DIR = "tests"
 PKG = check_output(("pkg-config", "--cflags", "--libs", "python3")).decode().split(' ')[:-1]
-# TODO: find why -fdiagnostic-color don't output colored report
 MAKE_CMD = ("g++", "-g3", "-Wall", "-Wextra", "-Werror", "-pedantic", "-std=c++17", \
-            "-I.", "-DTRACEBACK", "-fdiagnostics-color=auto", *PKG)
+            "-I.", "-DTRACEBACK", "-fdiagnostics-color=always", *PKG)
 #MAKE_CMD += ("-DPYDEBUG_CONST",)
 
 # files used in every test and that need to be compiled and liked statically
@@ -148,3 +151,20 @@ run(["pytest",
      "--disable-pytest-warnings",      # disable internal warnings
      "--html=test_report.html",         # enable html output
      "tests.py"])
+
+# rewrite the html report to transform ansi into html
+with open("test_report.html") as f:
+    report = f.read()
+
+with open("test_report.html", 'w') as f:
+    c = Converter()
+
+    page = BeautifulSoup(report, "html.parser")
+    head = page.find("head")
+
+    for e in page.find_all("div"):
+        converted = BeautifulSoup(unescape(c.convert(str(e))), "html.parser")
+        head.contents.extend(converted.find("head").contents)
+        e.contents = converted.find("div").contents
+
+    f.write(str(page))
