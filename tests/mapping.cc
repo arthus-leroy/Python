@@ -2,11 +2,15 @@
 
 int main()
 {
-    // Sequence
+    // Sequence getter
     auto list = Python::list(0, 1, 2, 3, 4, 5, 6);
-    Python four = list[4];
+    list[4].print();
 
-    // Dict
+    // Sequence setter
+    list[5] = 42;
+    list.print();
+
+    // Dict getter
     auto sys = Python::import("sys");
-    Python stderr = sys["stderr"];
+    sys["stderr"].print();
 }
