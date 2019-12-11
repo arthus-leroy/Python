@@ -311,7 +311,7 @@ private:
             {
                 // check for presence (as it's not checked ?)
                 case Type::Object:  ret = PyObject_GetAttr(object_, Python(key_)); break;
-                case Type::Dict:    ret = PyDict_GetItemWithError(object_, Python(key_)); break;
+                case Type::Dict:
                 case Type::Sequence:ret = PyObject_GetItem(object_, Python(key_)); break;
             }
             err("assign");
@@ -337,9 +337,9 @@ private:
 
             switch (type_)
             {
-                case Type::Object:  PyObject_SetAttr(object_.ptr, Python(key_), object); break;
-                case Type::Dict:    PyDict_SetItem(object_.ptr, Python(key_), object); break;
-                case Type::Sequence:PyObject_GetItem(object_, Python(key_)); break;
+                case Type::Object:  PyObject_SetAttr(object_, Python(key_), object); break;
+                case Type::Dict:
+                case Type::Sequence:PyObject_SetItem(object_, Python(key_), object); break;
             }
             err("assign");
 
@@ -1043,6 +1043,16 @@ public:
     }
 
     /*===== conversions =====*/
+    bool is_true(void)
+    {
+        assert(is_valid());
+
+        const auto ret = PyObject_IsTrue(ref_);
+        err("is_true");
+
+        return ret;
+    }
+
     ssize_t to_ssize_t(void)
     {
         assert(is_valid());
