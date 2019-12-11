@@ -116,6 +116,7 @@ def make_binary(cc: str, dir: str = ""):
 
 # execute binary with error check
 def exec(binary: str):
+    # FIXME: some outputs are not passed (like print or err)
     p = Popen(("./%s" %binary), stdout = PIPE, stderr = PIPE)
     stdout, stderr = p.communicate()
 
@@ -123,7 +124,6 @@ def exec(binary: str):
         fail_test(binary, stderr.decode())
 
     print("%s: %s" %(binary, green("PASSED", out.fileno())))
-    # TODO: pass stdout to passed tests to check if it matches expected output
     info(stdout.decode())
 """
 
