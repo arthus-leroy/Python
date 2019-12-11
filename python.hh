@@ -337,14 +337,9 @@ private:
 
             switch (type_)
             {
-                case Type::Object: PyObject_SetAttr(object_.ptr, Python(key_), object); break;
+                case Type::Object:  PyObject_SetAttr(object_.ptr, Python(key_), object); break;
                 case Type::Dict:    PyDict_SetItem(object_.ptr, Python(key_), object); break;
-                case Type::Sequence:
-                    if constexpr(std::is_convertible<key_t, Py_ssize_t>::value)
-                        PySequence_SetItem(object_.ptr, key_, object);
-                    else
-                        PyErr_SetString(PyExc_TypeError, "list indices must be integers or slices");
-                    break;
+                case Type::Sequence:PyObject_GetItem(object_, Python(key_)); break;
             }
             err("assign");
 
