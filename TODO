@@ -5,6 +5,7 @@ Python:
     Think about the case PyIndexProxy.operator=(PyIndexProxy)
     Disable debug name if no debug option have been enabled ?
     Decide on how optional should be handled (None or skipped -> skipped = work to do for containers)
+    Take a look at the operator module (contains, countOf, abs, neg, invert, floordiv)
 
 Other:
     make a tool that translates native python code into c++ (except some features ?)
