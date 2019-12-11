@@ -915,24 +915,12 @@ public:
         Python OP(Python o)                                             \
         {                                                               \
             assert(is_valid());                                         \
-            auto ret = (*this)[#FUNC].call(tuple(o));                   \
+            auto ret = import("operator").call(#FUNC, tuple(ref_, o));  \
             err(#OP);                                                   \
             ret.ref_.name = name() + " " + (#OP + 8) + " " + o.name();  \
                                                                         \
             return ret;                                                 \
         }
-
-    // Inplace arithmetic operators
-    OPERATION(operator+=, __iadd__)
-    OPERATION(operator-=, __isub__)
-    OPERATION(operator*=, __imul__)
-    OPERATION(operator/=, __itruediv__)     // FIXME
-    OPERATION(operator%=, __imod__)
-    OPERATION(operator>>=, __irshift__)
-    OPERATION(operator<<=, __ilshift__)
-    OPERATION(operator&=, __iand__)
-    OPERATION(operator^=, __ixor__)
-    OPERATION(operator|=, __ior__)
 
     // Arithmetic operators
     OPERATION(operator+, __add__)
@@ -945,6 +933,30 @@ public:
     OPERATION(operator&, __and__)
     OPERATION(operator^, __xor__)
     OPERATION(operator|, __or__)
+
+    // Inplace arithmetic operators
+    // the __i*__ operators don't seem to work
+/*    OPERATION(operator+=, __iadd__)
+    OPERATION(operator-=, __isub__)
+    OPERATION(operator*=, __imul__)
+    OPERATION(operator/=, __itruediv__)
+    OPERATION(operator%=, __imod__)
+    OPERATION(operator>>=, __irshift__)
+    OPERATION(operator<<=, __ilshift__)
+    OPERATION(operator&=, __iand__)
+    OPERATION(operator^=, __ixor__)
+    OPERATION(operator|=, __ior__)*/
+
+    Python operator+=(Python o) {   return (*this = *this + o); }
+    Python operator-=(Python o) {   return (*this = *this - o); }
+    Python operator*=(Python o) {   return (*this = *this * o); }
+    Python operator/=(Python o) {   return (*this = *this / o); }
+    Python operator%=(Python o) {   return (*this = *this % o); }
+    Python operator>>=(Python o) {  return (*this = *this >> o); }
+    Python operator<<=(Python o) {  return (*this = *this << o); }
+    Python operator&=(Python o) {   return (*this = *this & o); }
+    Python operator^=(Python o) {   return (*this = *this ^ o); }
+    Python operator|=(Python o) {   return (*this = *this | o); }
 
     bool is_valid(void) const
     {
