@@ -612,7 +612,7 @@ private:
     template <typename K, typename T, typename ...Args>
     static std::string dict_collect(Python& dict, K k, T i, Args... items)
     {
-        assert(dict != nullptr);
+        assert(dict.is_valid());
 
         auto key = Python(k);
         auto item = Python(i);
@@ -632,7 +632,7 @@ private:
     template <typename K, typename T>
     static std::string dict_collect(Python& dict, const std::pair<K, T>& p)
     {
-        assert(dict != nullptr);
+        assert(dict.is_valid());
 
         auto key = Python(p.first);
         auto item = Python(p.second);
@@ -936,6 +936,22 @@ public:
         return call(args, kwargs);
     }
 
+    # define COMPARISON(CMP, OP)                                            \
+        bool CMP(Python o)                                                  \
+        {                                                                   \
+            assert(is_valid() && o.is_valid());                             \
+            const auto ret = PyObject_RichCompareBool(*this, o, Py_##OP);   \
+            err(#CMP);                                                      \
+            return ret;                                                     \
+        }
+
+    COMPARISON(operator<,   LT)
+    COMPARISON(operator<=,  LE)
+    COMPARISON(operator==,  EQ)
+    COMPARISON(operator!=,  NE)
+    COMPARISON(operator>,   GT)
+    COMPARISON(operator>=,  GE)
+
     bool is_valid(void) const
     {
         return ref_;
@@ -967,6 +983,16 @@ public:
 
         auto ret = PyObject_HasAttrString(ref_, name.c_str());
         err("hasattr");
+
+        return ret;
+    }
+
+    bool delattr(const std::string& name)
+    {
+        assert(is_valid());
+
+        auto ret = PyObject_DelAttrString(ref_, name.c_str()) + 1;
+        err("delattr");
 
         return ret;
     }
