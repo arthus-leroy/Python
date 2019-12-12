@@ -170,7 +170,7 @@ struct PyRef
 
         # ifdef PYDEBUG_DECREF
             std::cout << "Decref of " << name
-                      << " (" << ptr->ob_refcnt << " instances remaining)" << std::endl;
+                      << " (" << (ptr->ob_refcnt - 1) << " instances remaining)" << std::endl;
         # endif
 
         # ifdef PYDEBUG_DEST
@@ -420,6 +420,24 @@ public:
         return Python(dict, "module " + name, true);
     }
 
+private:
+    template <typename ...Args>
+    static auto dict_extractor(Python dict, const std::string& name, const Args&... args)
+    {
+        if constexpr(sizeof...(Args))
+            return std::tuple_cat(std::tuple(dict[name]), dict_extractor(dict, args...));
+
+        return std::tuple(dict[name]);
+    }
+
+public:
+    /// Import object from the module \var name
+    template <typename ...Args>
+    static auto from_import(const std::string& name, const Args&... args)
+    {
+        return dict_extractor(import(name), args...);
+    }
+
     /// Return the python builtins
     static Python builtins(void)
     {
@@ -560,7 +578,7 @@ public:
         if constexpr(sizeof...(Args))
             name = list_collect(ptr, 0, items...);
 
-        return Python(ptr, "[" + name + "]", true);
+        return Python(ptr, "[" + name + "]");
     }
 
     // Overload of list for iterable
@@ -667,30 +685,6 @@ public:
         }
 
         return obj;
-    }
-
-    /// Create Python value from format
-    template <typename ...Args>
-    static Python build_format(const std::string& format, Args... args)
-    {
-        initialize();
-
-        auto ret = Py_BuildValue(format.c_str(), args...);
-        err("build_format");
-
-        return Python(ret, "built_value \"" + format + "\"");
-    }
-
-    /// Create Python String from format (printf-like)
-    template <typename ...Args>
-    static Python format(const std::string& format, Args... args)
-    {
-        initialize();
-
-        const auto ret = PyUnicode_FromFormat(format.c_str(), args...);
-        err("Python");
-
-        return Python(ret, "format \"" + format + "\"");
     }
 
     /// Release the ressources of the global Python instance
@@ -1169,7 +1163,7 @@ private:
     PyRef ref_;
 
 public:
-    static inline PyRef True = PyRef(Py_True, "True", false);
-    static inline PyRef False = PyRef(Py_False, "False", false);
-    static inline PyRef None = PyRef(Py_None, "None", false);
+    static inline PyRef True = PyRef(Py_True, "True", true);
+    static inline PyRef False = PyRef(Py_False, "False", true);
+    static inline PyRef None = PyRef(Py_None, "None", true);
 };
