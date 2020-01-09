@@ -1,11 +1,15 @@
 Python:
-    Copy all the methods of Python in Proxy in the Pythonway than operator[] and remove get()
-    Move GetAttr and SetAttr to their respective functions ?
+    Copy all the methods of Python in Proxy
     For dict: change from free arguments to pairs for clarity ?
     Think about the case PyIndexProxy.operator=(PyIndexProxy)
     Disable debug name if no debug option have been enabled ?
     Decide on how optional should be handled (None or skipped -> skipped = work to do for containers)
-    Take a look at the operator module (contains, countOf, abs, neg, invert, floordiv)
+    Add abs, floordiv, matmult and pow
+    Add Starred support for Dict
+    Optimize Python (by ungeneralyzing some things, eg. PyNumber_*/PySequence_* instead of operator module)
+        -> Benchmarked a x10 difference between operator and their C equivalent
 
-Other:
-    make a tool that translates native python code into c++ (except some features ?)
+Translator:
+    Make sure else block in Try/Catch is correctly implemented
+    Optimize Python code (see PEP 511)
+    Think about moving comprehensions' lambda into a separate function (need to keep track of names)
