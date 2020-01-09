@@ -22,7 +22,7 @@ invariant_files = ("python.hh", "backtrace.hh", "backtrace.cc")
 invariant_time = max([getmtime(file) for file in invariant_files])
 
 # convert .cc -> .o with error check
-def make_o(cc: str, dir: str = ""):
+def make_o(cc: str, dir: str = "") -> str:
     if dir:
         cc = join(dir, cc)
 
