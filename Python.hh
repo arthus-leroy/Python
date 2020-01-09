@@ -106,7 +106,7 @@ namespace
     std::wstring_convert<std::codecvt_utf8<char_t>, char_t> converter;
 }
 
-/// Wrapper around PyObject* taking care of INCREF/DECREF and debug
+/// Wrapper around PyObject* taking care of INCREF/DECREF and logging
 struct PyRef
 {
     PyRef(PyObject* ptr, const std::string& name, const bool borrowed = false)
@@ -150,7 +150,7 @@ struct PyRef
         return *this;
     }
 
-    operator PyObject*() const
+    operator PyObject*()
     {
         return ptr;
     }
@@ -161,8 +161,8 @@ struct PyRef
         return ptr;
     }
 
-    // NOTE: destruction won't work on borrowed reference with owner still alive
-    //       (it will not be logged) like a module's dict or a container's item
+    // NOTE: destruction don't work on borrowed reference with owner still alive
+    //       like a module's dict or a container's item
     ~PyRef()
     {
         if (ptr == nullptr)
@@ -201,56 +201,6 @@ public:
         Sequence,   // list, array
     };
 
-    /// Error class to indicate any normal error (look at the trace for more info)
-    class PythonError : std::exception
-    { };
-
-    /// Error class to indicate the end of a "for ... in ..." iteration
-    class StopIteration : std::exception
-    { };
-
-    // FIXME: refactor the whole class
-    /// Intermediary class to recongnize starred expressions
-    template <typename T>
-    class Starred
-    {
-    public:
-        Starred(T&& ref)
-            : ref_(ref)
-        {
-            static_assert(is_starred<0, Starred<T>>::value);
-        }
-
-        Starred(T& ref)
-            : ref_(ref)
-        {
-            static_assert(is_starred<0, Starred<T>>::value);
-        }
-
-        // For argument expansion (like tuple(1, 2, *args, 3))
-        operator Python()
-        {
-            Python ref = ref_;
-
-            assert(static_cast<PyObject*>(ref) != nullptr);
-
-            if (PySequence_Check(ref))
-                return ref;
-            else if (PyDict_Check(ref))
-                return ref_.keys();
-            else
-                throw std::invalid_argument("starred expression must be an iterable");
-        }
-
-        auto operator=(Python o)
-        {
-            return (ref_ = o);
-        }
-
-    private:
-        T& ref_;
-    };
-
 private:
     static void initialize()
     {
@@ -263,24 +213,14 @@ private:
 
     static void err(const char* func)
     {
-        if (mute_error)
-            return;
-
         if (PyErr_Occurred())
         {
-            if (finally_func)
-                finally_func();
-
             std::cerr << "\nIn function \"" << func << "\":" << std::endl;
             PyErr_Print();
             std::cerr << std::endl;
 
-            # ifdef BACKTRACE
-                // skip "err" trace
-                backtrace(1);
-            # endif
-
-            throw PythonError();
+            // skip "err" trace
+            backtrace(1);
         }
     }
 
@@ -321,7 +261,7 @@ private:
     static std::string to_string(const std::filesystem::path& s)
         { return s.string(); }
 
-    /// Wrapper around PyRef, taking a key, used to access an element
+    /// Wrapper around PyRef taking a key, used to access an element
     template <typename key_t>
     class PyIndexProxy
     {
@@ -371,12 +311,8 @@ private:
 
             if (type_ == Type::Object)
                 return Python(ret, object_.name + "." + to_string(key_), true);
-            else if constexpr(std::is_same<key_t, Python>::value)
-                return Python(ret, object_.name + "[" + key_.name() + "]");
-            else if constexpr(std::is_convertible<key_t, std::string>::value)
-                return Python(ret, object_.name + "[\"" + to_string(key_) + "\"]", true);
             else
-                return Python(ret, object_.name + "[" + to_string(key_) + "]", true);
+                return Python(ret, object_.name + "[\"" + to_string(key_) + "\"]", true);
         }
 
         auto& operator=(PyObject* object)
@@ -425,12 +361,12 @@ private:
             return operator=(Python(t));
         }
 
-        auto name() const
+        auto name()
         {
             return object_.name;
         }
 
-        auto key() const
+        auto key()
         {
             return key_;
         }
@@ -443,8 +379,6 @@ private:
     auto string(void) { return parent().string(); }
     auto is_valid(void) { return parent().is_valid(); }
     auto print(void) { return parent().print(); }
-    auto operator()(Python args = nullptr, Python kwargs = nullptr)
-    { return parent()(args, kwargs); }
 
     private:
         PyRef object_;
@@ -463,7 +397,6 @@ private:
     {}
 
 public:
-    // NOTE: operator[] won't let you access attribute of iterable, you must use attr
     /// Access operators
     # define ACCESS(TYPE) auto operator[](TYPE key) \
     {                                               \
@@ -472,19 +405,13 @@ public:
     }
     ACCESS(const std::string&)
     ACCESS(const Py_ssize_t)
-    ACCESS(Python)
+    ACCESS(Python&)
 
     /// Release the ressources of the global Python instance
     static void terminate(void)
     {
         Py_Finalize();
         initialized_ = false;
-    }
-
-    /// Disable/Enable error raising
-    static void mute_errors(const bool value)
-    {
-        mute_error = value;
     }
 
     /// Import the module \var name
@@ -533,7 +460,7 @@ public:
     static Python call_builtin(const std::string& name, Python args = nullptr, Python kwargs = nullptr)
     {
         auto main = builtins();
-        return main[name].call(args, kwargs);
+        return main.call(name, args, kwargs);
     }
 
     /// Evaluate python code
@@ -549,226 +476,149 @@ public:
     }
 
 private:
-    /// Assign object \var obj at the ith slot of tuple
-    template <typename T>
-    static std::string tuple_assign(PyObject** ptr, std::size_t& i, T t)
+    /// Collect the args (values) and put them into the tuple
+    template <typename T, typename ...Args>
+    static std::string tuple_collect(PyObject* tuple, Py_ssize_t i, T& item, Args... items)
     {
-        Python obj = Python(t);
+        assert(tuple != nullptr);
 
-        if constexpr(is_starred<0, T>::value)
-        {
-            /// Target size (size of the container to fill)
-            const std::size_t t_size = PyObject_Size(*ptr);
-            /// Container size (size of the container to get items from)
-            const std::size_t c_size = PyObject_Size(obj);
+        // disable DECREF since SetItem steals the reference of obj
+        auto obj = Python(item);
 
-            _PyTuple_Resize(ptr, t_size + c_size - 1);
-            err("tuple");
+        Py_INCREF(obj);
+        PyTuple_SetItem(tuple, i, obj);
+        err("tuple_collect");
 
-            for (std::size_t index = 0; index < c_size; index++, i++)
-                PyTuple_SetItem(*ptr, i, PySequence_GetItem(obj, index));
-            err("tuple");
+        std::string name = obj.ref_.name;
 
-            return std::string("*") + obj.name();
-        }
-        else
-        {
-            Py_INCREF(obj);
-            PyTuple_SetItem(*ptr, i++, obj);
-            err("tuple");
+        if constexpr(sizeof...(Args))
+            name += ", " + tuple_collect(tuple, i + 1, items...);
 
-            return obj.name();
-        }
+        return name;
     }
 
-    /// Collect the arguments of a C++ tuple to put them in a python tuple
-    template <std::size_t pos, typename ...Args>
-    static std::string tuple_caller(PyObject** ptr, std::size_t& i, const std::tuple<Args...>& args)
+    template <std::size_t size, std::size_t i = 0, typename ...Args>
+    static std::string tuple_collect(PyObject* ptr, const std::tuple<Args...>& tuple)
     {
-        std::string name;
+        auto obj = Python(std::get<i>(tuple));
 
-        if constexpr(pos == 0)
-            name = tuple_assign(ptr, i, std::get<pos>(args));
-        else
-            name = ", " + tuple_assign(ptr, i, std::get<pos>(args));
+        Py_INCREF(obj);
+        PyTuple_SetItem(ptr, i, obj);
+        err("tuple");
 
-        if constexpr(pos + 1 < sizeof...(Args))
-            name += tuple_caller<pos + 1>(ptr, i, args);
+        auto name = obj.name();
+        if constexpr(i + 1 < size)
+            name += ", " + tuple_collect<size, i + 1>(ptr, tuple);
 
         return name;
     }
 
 public:
-    /// Create a tuple from C++ tuple
+    /// Create a tuple from all the passed objects
     template <typename ...Args>
-    static Python tuple(const std::tuple<Args...>& args)
+    static Python tuple(Args... items)
     {
         initialize();
 
-        constexpr auto size = sizeof...(Args);
+        auto ptr = PyTuple_New(sizeof...(Args));
+        err("tuple");
+
+        std::string name;
+
+        if constexpr(sizeof...(Args))
+            name = tuple_collect(ptr, 0, items...);
+
+        return Python(ptr, "(" + name + ")");
+    }
+
+    /// Create a tuple from all the passed object
+    template <typename ...Args>
+    static Python tuple(const std::tuple<Args...>& t)
+    {
+        initialize();
+
+        constexpr auto size = std::tuple_size<std::tuple<Args...>>::value;
         auto ptr = PyTuple_New(size);
         err("tuple");
 
-        if constexpr(sizeof...(Args))
-        {
-            std::size_t i = 0;
-            return Python(ptr, "(" + tuple_caller<0>(&ptr, i, args) + ")");
-        }
-        else
-            return Python(ptr, "()");
-    }
-
-    /// Create a tuple from all the passed arguments
-    template <typename ...Args>
-    static Python tuple(Args... args)
-    {
-        return tuple(std::tuple(args...));
-    }
-
-    /// Create a tuple from C++ iterable
-    template <typename Iterable>
-    static Python tuple(const Iterable& iter)
-    {
-        static_assert(is_iterable<Iterable>::value);
-
-        initialize();
-
-        auto ptr = PyTuple_New(iter.size());
-        err("tuple");
-
         std::string name;
+        if (size)
+            name = tuple_collect<size>(ptr, t);
 
-        std::size_t i = 0;
-        for (auto&& e : iter)
-        {
-            if (i > 0)
-                name += ", ";
-
-            name += tuple_assign(&ptr, i,  e);
-        }
-
-        return Python(ptr, "[" + name + "]");
-    }
-
-    /// Create a tuple from python iterable
-    static Python tuple(Python o)
-    {
-        assert(o.is_valid());
-
-        auto ptr = PySequence_Tuple(o);
-        err("tuple");
-
-        return Python(ptr, "tuple(" + o.name() + ")" );
+        return Python(ptr, "(" + name + ")");
     }
 
 private:
-    /// Assign object \var obj at the ith slot of list
-    template <typename T>
-    static std::string list_assign(PyObject* ptr, T t)
+    /// Collect the args (values) and put them into the list
+    template <typename T, typename ...Args>
+    static std::string list_collect(PyObject* list, Py_ssize_t i, T& item, Args... items)
     {
-        Python obj = Python(t);
+        assert(list != nullptr);
 
-        if constexpr(is_starred<0, T>::value)
-        {
-            /// Container size (size of the container to get items from)
-            const std::size_t c_size = PyObject_Size(obj);
-            for (std::size_t index = 0; index < c_size; index++)
-                PyList_Append(ptr, PySequence_GetItem(obj, index));
-            err("list");
+        // INCREF since SetItem steal the reference of obj
+        auto obj = Python(item);
 
-            return std::string("*") + obj.name();
-        }
-        else
-        {
-            Py_INCREF(obj);
-            PyList_Append(ptr, obj);
-            err("list");
+        Py_INCREF(obj);
+        PyList_SetItem(list, i, obj);
+        err("list_collect");
 
-            return obj.name();
-        }
-    }
+        std::string name = obj.ref_.name;
 
-    /// Collect the arguments of a C++ tuple to put them in a python list
-    template <std::size_t pos, typename ...Args>
-    static std::string list_caller(PyObject* ptr, const std::tuple<Args...>& args)
-    {
-        std::string name;
-
-        if constexpr(pos == 0)
-            name = list_assign(ptr, std::get<pos>(args));
-        else
-            name = ", " + list_assign(ptr, std::get<pos>(args));
-
-        if constexpr(pos + 1 < sizeof...(Args))
-            name += list_caller<pos + 1>(ptr, args);
+        if constexpr(sizeof...(Args))
+            name += ", " + list_collect(list, i + 1, items...);
 
         return name;
     }
 
 public:
-    /// Create a list from C++ tuple
+    /// Create a list from all the passed objects
     template <typename ...Args>
-    static Python list(const std::tuple<Args...>& args)
+    static Python list(Args... items)
     {
         initialize();
 
-        auto ptr = PyList_New(0);
+        auto ptr = PyList_New(sizeof...(Args));
         err("list");
 
+        std::string name;
+
         if constexpr(sizeof...(Args))
-            return Python(ptr, "[" + list_caller<0>(ptr, args) + "]");
-        else
-            return Python(ptr, "[]");
+            name = list_collect(ptr, 0, items...);
+
+        return Python(ptr, "[" + name + "]");
     }
 
-    /// Create a list from all the passed arguments
-    template <typename ...Args>
-    static Python list(Args... args)
-    {
-        return list(std::tuple(args...));
-    }
-
-    /// Create a list from C++ iterable
+    // Overload of list for iterable
     template <typename Iterable>
-    static Python list(const Iterable& iter)
+    static Python list(const Iterable& i)
     {
         static_assert(is_iterable<Iterable>::value);
 
         initialize();
 
-        auto ptr = PyList_New(0);
-        err("list");
+        auto ptr = PyList_New(i.size());
+        err("dict");
 
         std::string name;
 
-        bool first = false;
-        for (auto&& e : iter)
+        std::size_t c = 0;
+        bool first = true;
+        for (const auto& e : i)
         {
-            if (first)
+            if (first == false)
                 name += ", ";
 
-            name += list_assign(ptr,  e);
-            first = true;
+            name += list_collect(ptr, c++,  e);
+            first = false;
         }
 
         return Python(ptr, "[" + name + "]");
-    }
-
-    /// Create a list from python iterable
-    static Python list(Python o)
-    {
-        assert(o.is_valid());
-
-        auto ptr = PySequence_List(o);
-        err("list");
-
-        return Python(ptr, "list(" + o.name() + ")" );
     }
 
 private:
     /// Collect the args (key, value pairs) and put them into the dict
     template <typename K, typename T, typename ...Args>
-    static std::string dict_assign(Python& dict, K k, T i, Args... items)
+    static std::string dict_collect(Python& dict, K k, T i, Args... items)
     {
         assert(dict.is_valid());
 
@@ -776,19 +626,19 @@ private:
         auto item = Python(i);
 
         dict[key] = item;
-        err("dict");
+        err("dict_collect");
 
         std::string name = key.ref_.name + ": " + item.ref_.name;
 
         if constexpr(sizeof...(Args))
-            name += ", " + dict_assign(dict, items...);
+            name += ", " + dict_collect(dict, items...);
 
         return name;
     }
 
-    /// Overload of dict_assign for pair
+    /// Overload of dict_collect for pair
     template <typename K, typename T>
-    static std::string dict_assign(Python& dict, const std::pair<K, T>& p)
+    static std::string dict_collect(Python& dict, const std::pair<K, T>& p)
     {
         assert(dict.is_valid());
 
@@ -796,7 +646,7 @@ private:
         auto item = Python(p.second);
 
         dict[key] = item;
-        err("dict");
+        err("dict_collect");
 
         return key.ref_.name + ": " + item.ref_.name;
     }
@@ -813,12 +663,12 @@ public:
 
         auto obj = Python(ptr, "dict");
         if constexpr(sizeof...(Args))
-            obj.ref_.name = dict_assign(obj, items...);
+            obj.ref_.name = dict_collect(obj, items...);
 
         return obj;
     }
 
-    /// Overload of dict for iterable
+    // Overload of dict for iterable
     template <typename Iterable>
     static Python dict(const Iterable& i)
     {
@@ -837,39 +687,11 @@ public:
             if (first == false)
                 obj.ref_.name += ", ";
 
-            obj.ref_.name += dict_assign(obj, e);
+            obj.ref_.name += dict_collect(obj, e);
             first = false;
         }
 
         return obj;
-    }
-
-    /// Create a dictionnary from passed \var keys iterable and \var values iterable
-    static Python dict(Python keys, Python values)
-    {
-        assert(keys.size() == values.size());
-
-        auto ptr = PyDict_New();
-        err("dict");
-
-        auto obj = Python(ptr, "dict(keys = " + keys.name() + ", values = " + values.name() + ")");
-
-        const std::size_t size = keys.size();
-        for (std::size_t i = 0; i < size; i++)
-            obj[static_cast<Python>(keys[i])] = values[i];
-
-        return obj;
-    }
-
-    /// Create a set from the iterable \var o
-    static Python set(Python o)
-    {
-        assert(PyTuple_Check(o) || PyList_Check(o));
-
-        auto ptr = PySet_New(o);
-        err("set");
-
-        return Python(ptr, "set(" + o.name() + ")");
     }
 
     /*===== CONSTRUCTORS =====*/
@@ -953,12 +775,6 @@ public:
 
     template <typename T>
     Python(PyIndexProxy<T> t)
-    {
-        *this = t;
-    }
-
-    template <typename T>
-    Python(Starred<T> t)
     {
         *this = t;
     }
@@ -1073,15 +889,13 @@ public:
         return call(args, kwargs);
     }
 
-    # define COMPARISON(OP, CMP)                                                \
-        Python OP(Python o)                                                     \
-        {                                                                       \
-            assert(is_valid() && o.is_valid());                                 \
-            auto ptr = PyObject_RichCompare(ref_, o, Py_##CMP);                 \
-            err(#OP);                                                           \
-            auto ret = Python(ptr, name() + " " + (#OP + 8) + " " + o.name());  \
-                                                                                \
-            return ret;                                                         \
+    # define COMPARISON(OP, CMP)                                            \
+        bool OP(Python o)                                                   \
+        {                                                                   \
+            assert(is_valid() && o.is_valid());                             \
+            const auto ret = PyObject_RichCompareBool(*this, o, Py_##CMP);  \
+            err(#OP);                                                       \
+            return ret;                                                     \
         }
 
     // Comparison operators
@@ -1096,7 +910,7 @@ public:
         Python OP(Python o)                                             \
         {                                                               \
             assert(is_valid());                                         \
-            auto ret = import("operator")[#FUNC](tuple(ref_, o));  \
+            auto ret = import("operator").call(#FUNC, tuple(ref_, o));  \
             err(#OP);                                                   \
             ret.ref_.name = name() + " " + (#OP + 8) + " " + o.name();  \
                                                                         \
@@ -1116,7 +930,18 @@ public:
     OPERATION(operator|, __or__)
 
     // Inplace arithmetic operators
-    // Can't use the __i*__ function, since immutable objets don't handle them
+    // the __i*__ operators don't seem to work
+/*    OPERATION(operator+=, __iadd__)
+    OPERATION(operator-=, __isub__)
+    OPERATION(operator*=, __imul__)
+    OPERATION(operator/=, __itruediv__)
+    OPERATION(operator%=, __imod__)
+    OPERATION(operator>>=, __irshift__)
+    OPERATION(operator<<=, __ilshift__)
+    OPERATION(operator&=, __iand__)
+    OPERATION(operator^=, __ixor__)
+    OPERATION(operator|=, __ior__)*/
+
     Python operator+=(Python o) {   return (*this = *this + o); }
     Python operator-=(Python o) {   return (*this = *this - o); }
     Python operator*=(Python o) {   return (*this = *this * o); }
@@ -1132,7 +957,7 @@ public:
     Python contains(Python o)
     {
         assert(is_valid());
-        auto ret = import("operator")["__contains__"](tuple(ref_, o));
+        auto ret = import("operator").call("__contains__", tuple(ref_, o));
         err("contains");
         ret.ref_.name = o.name() + " in " + name();
 
@@ -1144,169 +969,26 @@ public:
         return o.contains(*this);
     }
 
+
+
     Python count_of(Python o)
     {
         assert(is_valid());
-        auto ret = import("operator")["__countOf__"](tuple(ref_, o));
+        auto ret = import("operator").call("__countOf__", tuple(ref_, o));
         err("count_of");
         ret.ref_.name = o.name() + ".countOf(" + name() + ")";
 
         return ret;
     }
 
-    Python index_of(Python o)
+    std::size_t index_of(Python o)
     {
         assert(is_valid());
-        auto ret = import("operator")["__indexOf__"](tuple(ref_, o));
+        auto ret = import("operator").call("__indexOf__", tuple(ref_, o)).to_size_t();
         err("index_of");
         ret.ref_.name = o.name() + ".indexOf(" + name() + ")";
 
         return ret;
-    }
-
-private:
-    template <std::size_t i, typename ...Args>
-    class is_starred
-    {
-    public:
-        using type = typename std::tuple_element<i, std::tuple<Args...>>::type;
-        static constexpr bool value = std::is_same<type, Starred<Python>>::value
-                                   || std::is_same<type, Starred<PyIndexProxy<std::string>>>::value
-                                   || std::is_same<type, Starred<PyIndexProxy<Py_ssize_t>>>::value
-                                   || std::is_same<type, Starred<PyIndexProxy<Python>>>::value;
-    };
-
-    template <typename T, typename ...Args>
-    class starred_count
-    {
-    public:
-        static constexpr std::size_t value = is_starred<0, T>::value
-                                           + starred_count<Args...>::value;
-    };
-
-
-    template <typename T>
-    class starred_count<T>
-    {
-    public:
-        static constexpr std::size_t value = is_starred<0, T>::value;
-    };
-
-    static void assign_error_not_enough(const std::size_t expected, const std::size_t got)
-    {
-        std::stringstream msg;
-        msg << "not enough values to unpack (expected "
-            << expected << ", got " << got << ")";
-        PyErr_SetString(PyExc_ValueError, msg.str().c_str());
-        err("assign");
-    }
-
-    static void assign_error_too_many(const std::size_t expected, const std::size_t got)
-    {
-        std::stringstream msg;
-        msg << "too many values to unpack (expected "
-            << expected << ", got " << got << ")";
-        PyErr_SetString(PyExc_ValueError, msg.str().c_str());
-        err("assign");
-    }
-
-    template <int way, std::size_t i, std::size_t tend, typename ...To>
-    static void one_way_assign(Python from, const std::size_t fend, std::tuple<To&...> to)
-    {
-        if constexpr(way > 0)
-        {
-            // [0, tend] = [0, fend]
-            if constexpr(i == tend)
-                // starred part
-                std::get<i>(to) = static_cast<Python>(from.slice(Python(i)));  // i to fend
-            else
-            {
-                std::get<i>(to) = from[i];
-                one_way_assign<way, i + 1, tend>(from, tend, to);
-            }
-        }
-        else
-        {
-            if constexpr(i == 0)
-                // starred part
-                std::get<0>(to) = static_cast<Python>(from.slice(Python(0), Python(fend + 1))); // 0 to i
-            else
-            {
-                std::get<i>(to) = from[fend];
-                one_way_assign<way, i - 1, tend>(from, fend - 1, to);
-            }
-        }
-    }
-
-    template <std::size_t b, std::size_t e, std::size_t tend, typename ...To>
-    static void two_way_assign(Python from, const std::size_t fend, [[maybe_unused]] std::tuple<To&...> to)
-    {
-        if constexpr(b < e)
-        {
-            constexpr bool bs = is_starred<b, To...>::value;
-            constexpr bool es = is_starred<e, To...>::value;
-
-            // shouldn't raise at all
-            assert((bs && es) == false && "two starred expressions in same assign");
-
-            if (bs == false)
-                std::get<b>(to) = from[b];
-            if (es == false)
-                std::get<e>(to) = from[fend];
-
-            // b is starred (freeze b in position, while e keep going)
-            if constexpr(bs)
-                two_way_assign<b, e - 1, tend>(from, fend - 1, to);
-            // e is starred (freeze e in position, while b keep going)
-            else if constexpr(es)
-                two_way_assign<b + 1, e, tend>(from, fend, to);
-            // no starred (yet) - b and e keep going
-            else
-                two_way_assign<b + 1, e - 1, tend>(from, fend - 1, to);
-        }
-        // slice or odd size
-        if constexpr(b == e)
-        {
-            // starred expression
-            if constexpr(is_starred<b, To...>::value)
-                std::get<b>(to) = from.slice(Python(b), Python(fend + 1));
-            // odd size without starred
-            else if (e == fend)
-                std::get<b>(to) = from[b];
-            else
-                assign_error_not_enough(tend + 1, tend + fend - e + 1);
-        }
-        // even size without slice (fend > e means unequal size for assign)
-        else if (b > e && fend > e)
-            assign_error_too_many(tend + 1, tend + fend - e + 1);
-    }
-
-public:
-    template <typename ...To>
-    static void assign(Python from, To&&... to)
-    {
-        // ensures there is less than 2 starred expressions
-        static_assert(starred_count<To...>::value < 2);
-
-        assert(PyTuple_Check(from) || PyList_Check(from) || PyDict_Check(from));
-
-        // handle dict's case (return keys)
-        from = static_cast<PyObject*>(Starred(from));
-
-        /// Index of last element of to
-        constexpr std::size_t tend = sizeof...(To) - 1;
-        /// Index of last element of from
-        const std::size_t fend = from.size() - 1;
-
-        // starred at begin (*a, b, c)
-        if constexpr(is_starred<0, To...>::value)
-            one_way_assign<-1, tend, tend>(from, fend, std::forward_as_tuple(to...));
-        // starred at end (a, b, *c)
-        else if constexpr(is_starred<tend, To...>::value)
-            one_way_assign<1, 0, tend>(from, fend, std::forward_as_tuple(to...));
-        // starred in-between or none (a, b, c or a, *b, c)
-        else
-            two_way_assign<0, tend, tend>(from, fend, std::forward_as_tuple(to...));
     }
 
     bool is_valid(void) const
@@ -1319,6 +1001,8 @@ public:
         return ref_.name;
     }
 
+    // FIXME: add an additional detection for classes that implements __get_item__
+    //        these classes seems like Sequence, but don't accept always Numeric key
     Type get_type(void)
     {
         assert(is_valid());
@@ -1331,78 +1015,7 @@ public:
             return Type::Object;
     }
 
-    /*=====  DICT  =====*/
-    /// Return a slice of a Sequence
-    auto slice(Python start = None, Python stop = None, Python step = None)
-    {
-        std::string name = this->name() + "["
-                         + (start == None ? "" : start.name()) + ":"
-                         + (stop == None ? "" : stop.name()) + ":"
-                         + (step == None ? "" : step.name()) + "]";
-        Python slice_obj = Python(PySlice_New(start, stop, step), name);
-
-        return (*this)[slice_obj];
-    }
-
-    /// Return an iterator on the iterable
-    auto iter(void)
-    {
-        assert(is_valid());
-
-        auto ptr = PyObject_GetIter(ref_.ptr);
-        err("iter");
-
-        return Python(ptr, name() + ".__iter__()");
-    }
-
-    auto next(void)
-    {
-        assert(is_valid() && PyIter_Check(ref_.ptr));
-
-        auto ptr = PyIter_Next(ref_.ptr);
-        if (PyErr_Occurred() && PyErr_ExceptionMatches(PyExc_StopIteration))
-            throw StopIteration();
-        else
-            err("next");
-
-        return Python(ptr, name() + ".__next__()");
-    }
-
-    /// Return the size of an object (must be an iterable)
-    Py_ssize_t size(void) const
-    {
-        assert(is_valid());
-
-        auto ret = PyObject_Size(ref_.ptr);
-        err("size");
-
-        return ret;
-    }
-
-    /// Return current dict's keys
-    Python keys(void)
-    {
-        assert(PyDict_Check(ref_.ptr))
-
-        auto ptr = PyDict_Keys(ref_.ptr);
-        err("keys");
-
-        return Python(ptr, name() + ".keys()");
-    }
-
-    /// Return current dict's values
-    Python values(void)
-    {
-        assert(PyDict_Check(ref_.ptr))
-
-        auto ptr = PyDict_Values(ref_.ptr);
-        err("values");
-
-        return Python(ptr, name() + ".values()");
-    }
-
     /*===== OBJECT =====*/
-    /// Return true if the object has attribute \var name
     bool hasattr(const std::string& name)
     {
         assert(is_valid());
@@ -1413,16 +1026,6 @@ public:
         return ret;
     }
 
-    /// Get attribute of object (it's the only way to get attributes of iterables)
-    # define ATTR(TYPE) auto attr(TYPE key)             \
-    {                                                   \
-        assert(is_valid());                             \
-        return PyIndexProxy(ref_, Type::Object, key);   \
-    }
-    ATTR(const std::string&)
-    ATTR(Python&)
-
-    /// Delete the attribute \var name of the current object
     bool delattr(const std::string& name)
     {
         assert(is_valid());
@@ -1433,7 +1036,16 @@ public:
         return ret;
     }
 
-    /// Print the object on the file \var fp, print the representation if \var repr is True
+    auto size(void) const
+    {
+        assert(is_valid());
+
+        auto ret = PyObject_Size(ref_.ptr);
+        err("size");
+
+        return ret;
+    }
+
     void print(const bool repr = false, FILE* fp = stdout) const
     {
         PyObject_Print(ref_.ptr, fp, repr ? Py_PRINT_RAW : 0);
@@ -1441,8 +1053,6 @@ public:
         err("print");
     }
 
-    /*===== FUNCTION =====*/
-    /// Call the object with \var args as arguments and \var kwargs as keywords
     Python call(Python args = nullptr, Python kwargs = nullptr)
     {
         assert(is_valid());
@@ -1473,18 +1083,11 @@ public:
         return Python(ret, name() + nargs);
     }
 
-    /// Call the function \var name in object with \var args as arguments and \var kwargs as keywords
     Python call(const std::string& name, Python args = nullptr, Python kwargs = nullptr)
     {
         assert(is_valid());
 
-        return attr(name).call(args, kwargs);
-    }
-
-    /*===== MISC =====*/
-    static void set_finally(void (*func)())
-    {
-        finally_func = func;
+        return operator[](name).call(args, kwargs);
     }
 
     /*===== CONVERSIONS =====*/
@@ -1594,15 +1197,11 @@ public:
     }
 
 private:
-    static inline bool initialized_ = false;
-    static inline bool mute_error = false;
-    static inline void (*finally_func)() = nullptr;
-
+    static inline bool initialized_;
     PyRef ref_;
 
 public:
     static inline PyRef True = PyRef(Py_True, "True", true);
     static inline PyRef False = PyRef(Py_False, "False", true);
     static inline PyRef None = PyRef(Py_None, "None", true);
-    static inline PyRef Ellipsis = PyRef(Py_Ellipsis, "Ellipsis", true);
 };
